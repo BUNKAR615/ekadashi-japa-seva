@@ -206,12 +206,38 @@ create policy submissions_admin_all on public.submissions
   with check (public.is_admin());
 
 -- ---------- Column grants ----------
--- Withhold phone numbers from ordinary devotees; admins read them through
--- admin_devotees() instead.
-revoke select on public.profiles from authenticated;
+-- Supabase grants blanket privileges on public tables to `authenticated`.
+-- Those must be REVOKED before the column-scoped grants below mean anything —
+-- otherwise a devotee could edit any column of their own profile row,
+-- including is_admin, and promote themselves.
+revoke select, update, insert, delete on public.profiles from authenticated;
+
+-- Phone numbers are withheld from ordinary devotees; admins read them
+-- through admin_devotees() instead.
 grant select (id, name, devotee_id, group_name, is_admin, created_at)
   on public.profiles to authenticated;
 grant update (name, phone, group_name) on public.profiles to authenticated;
+
+-- Defence in depth: refuse any change to is_admin unless the caller is
+-- already an admin, even if the grants above are loosened later.
+create or replace function public.guard_profile_admin_flag()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if new.is_admin is distinct from old.is_admin and not public.is_admin() then
+    raise exception 'Only temple admins can change admin status';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists profiles_guard_admin on public.profiles;
+create trigger profiles_guard_admin
+  before update on public.profiles
+  for each row execute function public.guard_profile_admin_flag();
 
 grant execute on function public.event_totals(uuid) to authenticated;
 grant execute on function public.admin_devotees() to authenticated;
