@@ -70,13 +70,20 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_first boolean;
 begin
-  insert into public.profiles (id, name, devotee_id, phone)
+  -- The first devotee to register becomes the temple admin; everyone
+  -- after that is an ordinary devotee.
+  select not exists (select 1 from public.profiles) into v_first;
+
+  insert into public.profiles (id, name, devotee_id, phone, is_admin)
   values (
     new.id,
     coalesce(nullif(new.raw_user_meta_data ->> 'name', ''), split_part(new.email, '@', 1)),
     'HKMM' || lpad(nextval('public.devotee_seq')::text, 3, '0'),
-    nullif(new.raw_user_meta_data ->> 'phone', '')
+    nullif(new.raw_user_meta_data ->> 'phone', ''),
+    v_first
   )
   on conflict (id) do nothing;
   return new;

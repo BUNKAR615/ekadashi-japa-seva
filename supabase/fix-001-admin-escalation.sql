@@ -1,24 +1,24 @@
 -- ============================================================
---  FIX 001 — stop devotees granting themselves admin rights
---  Run this in the Supabase SQL Editor. Safe to re-run.
+--  FIX 001 — run this once in the Supabase SQL Editor.
+--  Safe to re-run.
 --
---  Why this was needed
---  -------------------
---  Supabase grants blanket UPDATE on public tables to the
---  `authenticated` role. The column grant in schema.sql ADDED to that
---  grant rather than replacing it, so the RLS policy that lets a
---  devotee edit their own profile row also let them set is_admin = true
---  on themselves — and with it, read the phone directory and manage
---  events. Revoking the blanket grant first closes it, and a trigger
---  is added as a second line of defence.
+--  1. Closes a privilege-escalation hole (devotees could make
+--     themselves admins).
+--  2. Removes the accounts created while testing.
+--  3. Makes the FIRST devotee who signs up the temple admin,
+--     so no follow-up query is needed.
 -- ============================================================
 
--- 1. Replace the blanket UPDATE grant with a column-scoped one.
+-- ---------- 1. Close the escalation hole ----------
+-- Supabase grants blanket privileges on public tables to `authenticated`.
+-- The column grant in schema.sql ADDED to that rather than replacing it,
+-- so the policy letting a devotee edit their own profile row also let
+-- them set is_admin = true on themselves.
 revoke update, insert, delete on public.profiles from authenticated;
 grant  update (name, phone, group_name) on public.profiles to authenticated;
 
--- 2. Defence in depth: refuse any change to is_admin unless the caller
---    is already an admin. This holds even if a grant is loosened later.
+-- Defence in depth: refuse any change to is_admin from a non-admin,
+-- even if the grants above are ever loosened.
 create or replace function public.guard_profile_admin_flag()
 returns trigger
 language plpgsql
@@ -38,17 +38,43 @@ create trigger profiles_guard_admin
   before update on public.profiles
   for each row execute function public.guard_profile_admin_flag();
 
--- 3. Reset anyone who escalated themselves during testing.
---    Re-grant admin deliberately afterwards (see the bottom of schema.sql).
-update public.profiles set is_admin = false
-where is_admin = true;
+-- ---------- 2. Clear out the test accounts ----------
+-- Profiles and submissions are removed automatically (on delete cascade).
+delete from auth.users
+where email like '%japa.test%'
+   or email like 'ui.test%'
+   or email like 'test.devotee%';
 
--- ============================================================
---  After running: make yourself an admin with your real email.
---
---    update public.profiles set is_admin = true
---    where id = (select id from auth.users where email = 'you@example.com');
---
---  That statement is run by you in the SQL Editor, which bypasses RLS,
---  so the new trigger does not block it.
--- ============================================================
+-- Start devotee IDs again from HKMM001.
+alter sequence public.devotee_seq restart with 1;
+
+-- ---------- 3. Bootstrap the first devotee as admin ----------
+-- The first person to register becomes the temple admin; everyone after
+-- that is an ordinary devotee. Sign up in the app straight after running
+-- this, so the first account is yours.
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_first boolean;
+begin
+  select not exists (select 1 from public.profiles) into v_first;
+
+  insert into public.profiles (id, name, devotee_id, phone, is_admin)
+  values (
+    new.id,
+    coalesce(nullif(new.raw_user_meta_data ->> 'name', ''), split_part(new.email, '@', 1)),
+    'HKMM' || lpad(nextval('public.devotee_seq')::text, 3, '0'),
+    nullif(new.raw_user_meta_data ->> 'phone', ''),
+    v_first
+  )
+  on conflict (id) do nothing;
+  return new;
+end;
+$$;
+
+-- ---------- Check ----------
+select count(*) as remaining_devotees from public.profiles;
