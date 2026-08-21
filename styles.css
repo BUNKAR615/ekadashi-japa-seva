@@ -417,6 +417,20 @@ button{cursor:pointer}
   padding:22px 20px;box-shadow:0 24px 50px -24px rgba(74,27,31,.6);animation:toastIn .22s ease-out;
 }
 
+/* Demo-mode banner */
+.mode-banner{
+  flex:none;background:var(--sand-bg);border-bottom:1px solid rgba(176,138,62,.35);
+  color:#8A6A24;font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+  font-weight:500;text-align:center;padding:6px 12px;
+}
+
+/* Admin badge in the devotee list */
+.admin-tag{
+  display:inline-block;margin-left:6px;padding:1px 6px;border-radius:20px;
+  background:rgba(217,119,46,.14);color:#A8551C;
+  font-size:8.5px;letter-spacing:.1em;text-transform:uppercase;font-weight:500;vertical-align:middle;
+}
+
 /* Toast */
 .toast-wrap{position:absolute;inset:0;z-index:30;display:flex;align-items:center;justify-content:center;pointer-events:none}
 .toast-card{
@@ -425,6 +439,8 @@ button{cursor:pointer}
 }
 .toast-card .lotus{font-size:40px;line-height:1;animation:lotusBloom .5s cubic-bezier(.2,1.2,.3,1)}
 .toast-card p{font-family:var(--serif);font-size:17px;line-height:1.4;color:var(--maroon);margin:12px 0 0;max-width:220px}
+.toast-card.err{border-color:rgba(140,47,38,.4);background:rgba(247,237,230,.98)}
+.toast-card.err p{font-family:var(--sans);font-size:14px;color:#5C2A22;margin:0;max-width:240px}
 
 /* Loading */
 .loading-overlay{position:absolute;inset:0;z-index:40;background:var(--ivory);display:flex;align-items:center;justify-content:center}
