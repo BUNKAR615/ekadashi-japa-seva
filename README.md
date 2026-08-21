@@ -1,10 +1,10 @@
 # Ekadashi Japa Seva
 
-A rounds-counter app for **Hare Krishna Marwad Mandir** — devotees record their
+A rounds-counter app for **Hare Krishna Mandir, Jodhpur** — devotees record their
 Ekadashi japa rounds, see the group's combined offering, and temple admins run
-events. Implemented from the Claude Design project *Japa Seva*.
+events. Implemented from the Claude Design project *Japa Seva* (clean pass, matched to hkmjodhpur.org).
 
-**Live:** https://bunkar615.github.io/ekadashi-japa-seva/
+**Live:** https://japa-seva.vercel.app
 
 ## Two modes
 
@@ -41,18 +41,19 @@ Both come from **Project Settings**: the URL is under *Data API*, the key is the
 safe to commit. **Never** put the `service_role` key here — it bypasses all
 security.
 
-**4. Make yourself an admin.** Sign up in the app first, then run this in the SQL
-Editor with your email:
+**4. Make yourself an admin.** The first devotee to register becomes the temple
+admin automatically, so simply sign up first. To promote someone later, run this
+in the SQL Editor:
 
 ```sql
 update public.profiles set is_admin = true
-where id = (select id from auth.users where email = 'you@example.com');
+where id = (select id from auth.users where email = 'them@example.com');
 ```
 
-Sign out and back in, and the **Admin** toggle appears in the header.
+The **Admin** toggle appears in the header only for admin accounts.
 
 **5. Bump the cache version.** After changing `config.js`, edit `index.html` and
-raise `?v=2` to `?v=3` on the script and stylesheet tags, so phones pick up the
+raise `?v=5` to `?v=6` on the script and stylesheet tags, so phones pick up the
 new files instead of a cached copy.
 
 ### Email confirmation
@@ -82,20 +83,20 @@ so they hold even if someone edits the page in their browser:
 
 | File | Purpose |
 |------|---------|
-| `index.html` | Welcome/sign-in screen (arch & jali direction) + app shell |
-| `styles.css` | Design system: ivory/sandalwood/maroon/saffron palette, Yeseva One + Jost + Tiro Devanagari type, jali watermarks |
+| `index.html` | Welcome/sign-in screen + app shell |
+| `styles.css` | Design system: paper/white/ink neutrals with a saffron accent, Poppins + Tiro Devanagari type |
 | `app.js` | Views, interaction, and rendering |
 | `store.js` | Data layer — the Supabase and demo implementations behind one async API |
 | `config.js` | Your Supabase keys (blank = demo mode) |
 | `supabase/schema.sql` | Tables, policies and functions; run once in the SQL Editor |
 | `manifest.webmanifest` | Installable-app metadata — devotees can add it to their home screen |
-| `assets/` | Temple logo, Śrīla Prabhupāda photograph, and generated app icons |
+| `assets/` | Temple logo and Srila Prabhupada portrait (from hkmjodhpur.org), plus generated app icons |
 
 ## Features
 
 **Devotee** — Japa tab (today's seva card, numeric keypad capped at 216 rounds,
 lotus toast on save), Together tab (group stats + leaderboard), Journey tab
-(event history timeline), Me tab (profile, sign out).
+(event history), Me tab (profile, temple aarti timings, sign out).
 
 **Admin** (header toggle, only shown to admins) — Overview dashboard
 (participation, top offerings, CSV export), Events (create / edit / activate /
@@ -110,5 +111,5 @@ No build step — plain HTML/CSS/JS. Serve the folder over HTTP:
 python -m http.server 8734
 ```
 
-then open <http://localhost:8734>. Deploys automatically to GitHub Pages on push
-to `main`.
+then open <http://localhost:8734>. Pushing to `main` deploys automatically to
+Vercel (japa-seva.vercel.app) and GitHub Pages.

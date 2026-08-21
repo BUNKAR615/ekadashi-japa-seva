@@ -1,15 +1,17 @@
 {
   "name": "Ekadashi Japa Seva",
   "short_name": "Japa Seva",
-  "description": "Record your Ekadashi japa rounds and see the group's offering — Hare Krishna Marwad Mandir.",
+  "description": "Record your chanting rounds on Ekadashi and see what the temple community offers together — Hare Krishna Mandir, Jodhpur.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#FBF6EC",
-  "theme_color": "#4A1B1F",
+  "background_color": "#F7F5F1",
+  "theme_color": "#F7F5F1",
   "lang": "en-IN",
-  "categories": ["lifestyle"],
+  "categories": [
+    "lifestyle"
+  ],
   "icons": [
     {
       "src": "assets/icon-192.png",

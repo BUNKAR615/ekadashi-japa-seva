@@ -1,5 +1,5 @@
 /* ============================================================
-   Ekadashi Japa Seva — devotee & admin app
+   Ekadashi Japa Seva — Hare Krishna Mandir, Jodhpur
 
    All data access goes through window.JapaStore (see store.js), which
    is either the Supabase backend or the localStorage demo store.
@@ -10,10 +10,18 @@
   const MAX_ROUNDS = 216;
   const NAMES_PER_ROUND = 108;
 
+  // Aarti timings as published on hkmjodhpur.org
+  const TIMINGS = [
+    ['Mangala Arti', '4:30 AM'],
+    ['Shringar Aarti', '7:30 AM'],
+    ['Bhagvatam Class', '8:15 AM'],
+    ['Rajbhog Aarti', '12:00 PM'],
+    ['Sandhya Aarti', '7:00 PM'],
+    ['Shayan Aarti', '8:30 PM']
+  ];
+
   let store = null;
 
-  /* Everything the current screen needs, refreshed from the store
-     before each render so the view functions stay synchronous. */
   const data = {
     user: null, events: [], event: null, mine: 0,
     totals: { total: 0, participants: 0, average: 0, highest: 0, capacity: 0 },
@@ -23,7 +31,7 @@
   const ui = {
     role: 'devotee', tab: 'japa',
     sheet: null, draft: '', capped: false,
-    query: '', editEventId: null, resultsEventId: null,
+    query: '', editEventId: null,
     toastTimer: null, busy: false
   };
 
@@ -42,7 +50,7 @@
   function fmtDateLong(iso) {
     if (!iso) return '';
     const d = new Date(iso + 'T00:00:00');
-    return isNaN(d) ? iso : d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    return isNaN(d) ? iso : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   }
 
   const activeEvent  = () => data.events.find(e => e.status === 'active');
@@ -54,7 +62,7 @@
 
   const isAdmin = () => !!(data.user && data.user.isAdmin);
 
-  /* ---------- Loading data ---------- */
+  /* ---------- Loading ---------- */
 
   async function refresh() {
     data.events = await store.listEvents();
@@ -111,12 +119,8 @@
       authMode = authMode === 'signin' ? 'create' : 'signin';
       const create = authMode === 'create';
       $('#auth-name-block').classList.toggle('hidden', !create);
-      $('#auth-title').textContent = create ? 'Welcome, devotee' : 'Hare Krishna 🙏';
-      $('#auth-sub').textContent = create
-        ? 'Create your account to offer rounds'
-        : 'Welcome to Hare Krishna Marwad Mandir';
       $('#auth-submit').textContent = create ? 'Create Account' : 'Sign In';
-      $('#auth-switch').firstChild.textContent = create ? 'Already have an account? ' : 'Don’t have an account? ';
+      $('#auth-switch').firstChild.textContent = create ? 'Already registered? ' : 'New here? ';
       toggle.textContent = create ? 'Sign In' : 'Create Account';
       hideAuthMsg();
     });
@@ -160,18 +164,14 @@
   function authMsg(text, kind) {
     const el = $('#auth-error');
     el.textContent = text;
-    el.style.color = kind === 'ok' ? '#3F6B49' : '#8C2F26';
+    el.style.color = kind === 'ok' ? '#2F7D45' : '';
     el.classList.remove('hidden');
   }
   function hideAuthMsg() { $('#auth-error').classList.add('hidden'); }
 
   async function enterApp() {
     $('#loading').classList.remove('hidden');
-    try {
-      await refresh();
-    } catch (e) {
-      console.error(e);
-    }
+    try { await refresh(); } catch (e) { console.error(e); }
     $('#welcome').classList.add('hidden');
     $('#app').classList.remove('hidden');
     $('#loading').classList.add('hidden');
@@ -191,7 +191,7 @@
     $('#auth-pass').value = '';
   }
 
-  /* ---------- Rendering ---------- */
+  /* ---------- Render ---------- */
 
   function render() {
     renderHeader();
@@ -223,23 +223,23 @@
   }
 
   const DEV_TABS = [
-    { key: 'japa',     label: 'Japa',     icon: '🪷' },
-    { key: 'together', label: 'Together', icon: '🌸' },
-    { key: 'journey',  label: 'Journey',  icon: '▤' },
-    { key: 'me',       label: 'Me',       icon: '☸' }
+    { key: 'japa', label: 'Japa' },
+    { key: 'together', label: 'Together' },
+    { key: 'journey', label: 'Journey' },
+    { key: 'me', label: 'Me' }
   ];
   const ADM_TABS = [
-    { key: 'aOverview', label: 'Overview', icon: '▦' },
-    { key: 'aEvents',   label: 'Events',   icon: '🪷' },
-    { key: 'aDevotees', label: 'Devotees', icon: '☸' },
-    { key: 'me',        label: 'Me',       icon: '◉' }
+    { key: 'aOverview', label: 'Overview' },
+    { key: 'aEvents', label: 'Events' },
+    { key: 'aDevotees', label: 'Devotees' },
+    { key: 'me', label: 'Me' }
   ];
 
   function renderTabs() {
     const tabs = ui.role === 'admin' ? ADM_TABS : DEV_TABS;
     $('#tabbar').innerHTML = tabs.map(t => `
       <button type="button" class="tab-btn${ui.tab === t.key ? ' on' : ''}" data-tab="${t.key}">
-        <span class="ico">${t.icon}</span><span class="lbl">${t.label}</span>
+        <span class="dot"></span><span class="lbl">${t.label}</span>
       </button>`).join('');
   }
 
@@ -270,15 +270,15 @@
 
   function viewJapa() {
     const ev = data.event;
+
     if (!ev) {
       const next = nextUpcoming();
       return `<div class="pad">
         <div class="card no-event-card">
-          <div class="flower">🌸</div>
-          <p class="big">There is currently no active Japa event.</p>
+          <p class="big">No active Japa event</p>
           <p class="small">${next
-            ? `The next Ekadashi is ${esc(fmtDateShort(next.event_date))}. Your rounds can be offered then.`
-            : 'A new Japa event will be announced soon. Hare Krishna!'}</p>
+            ? `The next Ekadashi is ${esc(fmtDateLong(next.event_date))}. Your rounds can be offered then.`
+            : 'A new Japa event will be announced soon.'}</p>
         </div>
         ${quoteCard()}${mantraBlock()}
       </div>`;
@@ -291,39 +291,30 @@
 
     return `<div class="pad">
       <div class="card event-card">
-        <div class="jali"></div>
-        <div class="inner">
-          <div class="event-head">
-            <span class="eyebrow">Today’s seva</span>
-            <span class="chip ${closed ? 'closed' : 'active'}">${closed ? 'Closed' : 'Active now'}</span>
-          </div>
-          <div class="event-lotus">🪷</div>
-          <h2 class="event-title">${esc(ev.name)}</h2>
-          <div class="event-date">${esc(fmtDateLong(ev.event_date))}</div>
-          <div class="gold-rule"></div>
-          <p class="event-tag">Offer your chanting with devotion.</p>
-          <div style="text-align:center">
-            <div class="rounds-label">Your rounds</div>
-            <div class="rounds-num">${rounds}</div>
-            <div class="rounds-caption">${rounds === 0
-              ? 'Not recorded yet'
-              : `Rounds completed · ${fmt(rounds * NAMES_PER_ROUND)} names`}</div>
-            <button type="button" class="cta ${closed ? 'dead' : 'live'}" data-action="open-sheet">
-              ${closed ? 'Event closed' : (rounds === 0 ? 'Record my rounds' : 'Update Rounds')}
-            </button>
-            <div class="cta-hint">${closed
-              ? 'Results stay in your Journey'
-              : `You can change this any time until ${esc(ev.ends_at)}`}</div>
-          </div>
+        <div class="event-top">
+          <span class="eyebrow">Ekadashi · ${esc(fmtDateShort(ev.event_date))}</span>
+          <span class="chip ${closed ? 'closed' : 'active'}">${closed ? 'Closed' : 'Active'}</span>
         </div>
+        <h2 class="event-title">${esc(ev.name)}</h2>
+        <div class="rounds-label">Your rounds today</div>
+        <div class="rounds-num">${rounds}</div>
+        <div class="rounds-caption">${rounds === 0
+          ? 'Not recorded yet'
+          : `${fmt(rounds * NAMES_PER_ROUND)} holy names`}</div>
+        <button type="button" class="cta ${closed ? 'dead' : 'live'}" data-action="open-sheet">
+          ${closed ? 'Event closed' : (rounds === 0 ? 'Record my rounds' : 'Update Rounds')}
+        </button>
+        <div class="cta-hint">${closed
+          ? 'Results stay in your Journey'
+          : `You can change this any time until ${esc(ev.ends_at)}`}</div>
       </div>
 
       <div class="card together-card">
-        <div class="together-head">
-          <span class="eyebrow">Together we chant</span>
+        <div class="together-top">
+          <span class="eyebrow">Together today</span>
           <a href="#" data-action="goto-together">See all</a>
         </div>
-        <div class="group-num-row">
+        <div class="group-row">
           <div class="group-num">${fmt(t.total)}</div>
           <div class="group-unit">rounds</div>
         </div>
@@ -332,7 +323,6 @@
           : `${fmt(t.participants)} devotees have submitted`}</div>
         <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
         <div class="progress-meta"><span>${pct}% of today’s goal</span><span>${fmt(ev.goal_rounds)} goal</span></div>
-        <p class="together-line">Together we have offered ${fmt(t.total)} rounds${closed ? '' : ' today'}.</p>
       </div>
 
       ${quoteCard()}${mantraBlock()}
@@ -340,20 +330,19 @@
   }
 
   function quoteCard() {
-    return `<div class="quote-card">
-      <div class="photo"><img src="assets/prabhupada.jpg" alt="Śrīla Prabhupāda"></div>
+    return `<div class="card quote-card">
+      <div class="portrait"><img src="assets/prabhupada-circle.png" alt="Srila Prabhupada"></div>
       <div>
         <p>“Chant Hare Krishna and be happy.”</p>
-        <div class="attrib">Śrīla Prabhupāda</div>
+        <div class="attrib">Srila Prabhupada</div>
       </div>
     </div>`;
   }
 
   function mantraBlock() {
     return `<div class="mantra-block">
-      <div class="gold-divider"><span class="line"></span><span class="dot"></span><span class="line"></span></div>
       <p class="mantra-dev">हरे कृष्ण हरे कृष्ण कृष्ण कृष्ण हरे हरे<br>हरे राम हरे राम राम राम हरे हरे</p>
-      <p class="mantra-lat">HARE KṚṢṆA HARE KṚṢṆA KṚṢṆA KṚṢṆA HARE HARE<br>HARE RĀMA HARE RĀMA RĀMA RĀMA HARE HARE</p>
+      <p class="mantra-lat">HARE KRISHNA HARE KRISHNA KRISHNA KRISHNA HARE HARE<br>HARE RAMA HARE RAMA RAMA RAMA HARE HARE</p>
     </div>`;
   }
 
@@ -363,14 +352,12 @@
     const ev = data.event;
     if (!ev) {
       return `<div class="pad-lg">
-        <h2 class="h-serif" style="font-size:25px;margin:0 0 4px">🌸 Japa Seva</h2>
-        <p style="margin:0 0 18px;font-size:13px;color:var(--muted)">No event yet — the group offering will appear here.</p>
+        <h2 class="h2">Together</h2>
+        <p class="sub">No event yet — the group offering will appear here.</p>
       </div>`;
     }
     const t = data.totals;
     const people = data.leaders;
-    const top = t.highest || (people[0] ? people[0].rounds : 1) || 1;
-    const marks = ['🥇', '🥈', '🥉'];
     const hidden = ev.visibility === 'admin' && !isAdmin();
 
     const stats = [
@@ -382,31 +369,31 @@
 
     const board = hidden
       ? `<div class="private-card">
-          <div class="flower">🪷</div>
-          <p class="big">Individual rounds are kept private for this event.</p>
-          <p class="small">Only temple admins can see each devotee’s submission. The group total above is everyone’s offering together.</p>
+          <p class="big">Individual rounds are private for this event</p>
+          <p class="small">Only temple admins can see each devotee’s submission. The totals above are everyone’s offering together.</p>
         </div>`
-      : `<div class="board">
-          ${people.map((p, i) => `
-            <div class="board-row${p.me ? ' me' : ''}">
-              <div class="bar" style="width:${Math.round((p.rounds / top) * 100)}%;background:${i < 3 ? 'rgba(217,119,46,.10)' : 'rgba(176,138,62,.07)'}"></div>
-              <div class="mark">${i < 3 ? marks[i] : i + 1}</div>
-              <div class="who">
-                <div class="nm">${esc(ev.visibility === 'ids' ? p.devoteeId : p.name)}</div>
-                <div class="sb">${ev.visibility === 'ids'
-                  ? (p.me ? 'You' : 'Devotee')
-                  : (p.me ? 'You · ' + esc(p.devoteeId) : esc(p.devoteeId))}</div>
-              </div>
-              <div class="cnt"><div class="n">${p.rounds}</div><div class="u">rounds</div></div>
-            </div>`).join('')}
-          ${people.length === 0 ? '<p class="empty-note">No rounds recorded yet — be the first to offer.</p>' : ''}
-        </div>
-        ${people.length ? `<p class="board-note">Not a competition — a shared offering.<br>${
-          ev.visibility === 'ids' ? 'Shown by Devotee ID for this event.' : 'Shown by name for this event.'}</p>` : ''}`;
+      : (people.length
+        ? `<div class="list-card">
+            ${people.map((p, i) => `
+              <div class="board-row${p.me ? ' me' : ''}">
+                <div class="rank">${i + 1}</div>
+                <div class="who">
+                  <div class="nm">${esc(ev.visibility === 'ids' ? p.devoteeId : p.name)}</div>
+                  <div class="sb">${ev.visibility === 'ids'
+                    ? (p.me ? 'You' : 'Devotee')
+                    : (p.me ? 'You · ' + esc(p.devoteeId) : esc(p.devoteeId))}</div>
+                </div>
+                <div class="cnt">${p.rounds}</div>
+              </div>`).join('')}
+          </div>
+          <p class="board-note">Not a competition — a shared offering. ${
+            ev.visibility === 'ids' ? 'Shown by Devotee ID for this event.' : 'Shown by name for this event.'}</p>`
+        : `<div class="private-card"><p class="big">No rounds recorded yet</p>
+             <p class="small">Be the first to offer your chanting today.</p></div>`);
 
     return `<div class="pad-lg">
-      <h2 class="h-serif" style="font-size:25px;margin:0 0 4px">🌸 Japa Seva</h2>
-      <p style="margin:0 0 18px;font-size:13px;color:var(--muted)">Together we chant — ${esc(fmtDateShort(ev.event_date))}</p>
+      <h2 class="h2">Together</h2>
+      <p class="sub">${esc(ev.name)} · ${esc(fmtDateLong(ev.event_date))}</p>
       <div class="stat-grid">
         ${stats.map(s => `<div class="stat-tile"><div class="lbl">${s.label}</div><div class="val">${s.value}</div></div>`).join('')}
       </div>
@@ -422,30 +409,23 @@
     const active = activeEvent();
 
     return `<div class="pad-lg">
-      <h2 class="h-serif" style="font-size:25px;margin:0 0 4px">Your Japa Journey</h2>
-      <p style="margin:0 0 20px;font-size:13px;color:var(--muted)">${fmt(total)} rounds across ${items.length} event${items.length === 1 ? '' : 's'} with the group</p>
+      <h2 class="h2">Journey</h2>
+      <p class="sub">${fmt(total)} rounds across ${items.length} event${items.length === 1 ? '' : 's'} with the temple</p>
       ${items.length === 0
-        ? `<div class="card no-event-card"><div class="flower">🌸</div>
-             <p class="big">Your chanting has not been recorded yet.</p>
+        ? `<div class="private-card"><p class="big">Nothing recorded yet</p>
              <p class="small">Once you offer rounds, each event will appear here.</p></div>`
-        : `<div class="timeline">
-            <div class="rail"></div>
+        : `<div class="list-card">
             ${items.map(h => {
               const isToday = active && h.eventId === active.id;
-              return `<div class="tl-item">
-                <div class="dot" style="background:${isToday ? '#D9772E' : '#B08A3E'}"></div>
-                <div class="tl-card">
-                  <div class="tl-top">
-                    <div>
-                      <div class="tl-date">${esc(fmtDateShort(h.date))}</div>
-                      <div class="tl-title">${esc(h.name)}</div>
-                    </div>
-                    <div style="flex:none">
-                      <div class="tl-rounds">🪷 ${h.rounds}</div>
-                      <div class="tl-unit">rounds</div>
-                    </div>
-                  </div>
+              return `<div class="tl-row">
+                <div class="who">
+                  <div class="tl-date">${esc(fmtDateShort(h.date))}</div>
+                  <div class="tl-title">${esc(h.name)}</div>
                   <div class="tl-note">${isToday ? 'Today · updated at ' + esc(h.time) : 'Recorded at ' + esc(h.time)}</div>
+                </div>
+                <div style="flex:none">
+                  <div class="tl-rounds">${h.rounds}</div>
+                  <div class="tl-unit">rounds</div>
                 </div>
               </div>`;
             }).join('')}
@@ -464,7 +444,7 @@
       { label: 'Group', value: u.group || '—' },
       { label: 'Role', value: u.isAdmin ? 'Temple admin' : 'Devotee' }
     ];
-    return `<div class="pad-lg">
+    return `<div class="pad">
       <div class="card profile-card">
         <div class="avatar">${esc((u.name || 'D')[0])}</div>
         <div class="profile-name">${esc(u.name)}</div>
@@ -474,15 +454,22 @@
           <div class="profile-stat"><div class="n">${data.history.length}</div><div class="l">Events joined</div></div>
         </div>
       </div>
-      <div class="profile-rows">
+
+      <div class="list-card">
         ${rows.map(r => `<div class="profile-row"><span class="l">${r.label}</span><span class="v">${esc(r.value)}</span></div>`).join('')}
       </div>
-      <button type="button" class="btn-outline" data-action="sign-out">Sign out</button>
-      <p class="me-footer">Chant • Remember • Serve</p>
+
+      <div class="timings-card">
+        <span class="eyebrow">Temple timings</span>
+        ${TIMINGS.map(([t, v]) => `<div class="timing"><span class="t">${t}</span><span class="v">${v}</span></div>`).join('')}
+      </div>
+
+      <button type="button" class="btn-outline" data-action="sign-out">Sign Out</button>
+      <p class="me-footer">Chant Hare Krishna and Be Happy</p>
     </div>`;
   }
 
-  /* ----- Admin: Overview ----- */
+  /* ----- Admin ----- */
 
   function viewAdminOverview() {
     const ev = activeEvent();
@@ -491,7 +478,7 @@
     const top = ev ? data.leaders.slice(0, 4) : [];
 
     const stats = ev ? [
-      { label: 'Active event', value: ev.name.split(' ')[0], sub: `${fmtDateShort(ev.event_date)} · closes ${ev.ends_at}` },
+      { label: 'Active event', value: 'Ekadashi', sub: `${fmtDateShort(ev.event_date)} · closes ${ev.ends_at}` },
       { label: 'Total devotees', value: fmt(t.capacity), sub: 'registered' },
       { label: 'Total rounds', value: fmt(t.total), sub: 'today' },
       { label: 'Average rounds', value: String(t.average), sub: 'per participant' }
@@ -502,39 +489,34 @@
       { label: 'Average rounds', value: '—', sub: 'no event' }
     ];
 
-    return `<div class="pad-lg">
-      <div class="admin-hero">
-        <div class="jali"></div>
-        <div class="inner">
-          <div class="eyebrow">Hare Krishna Marwad Mandir</div>
-          <h2>Admin Dashboard</h2>
-          <div class="live-line">
-            <span class="live-dot${ev ? '' : ' off'}"></span>
-            ${ev ? `${esc(ev.name)} · live until ${esc(ev.ends_at)}` : 'No event is live right now'}
-          </div>
+    return `<div class="pad">
+      <div class="card admin-head">
+        <h2>Admin</h2>
+        <div class="live-line">
+          <span class="live-dot${ev ? '' : ' off'}"></span>
+          ${ev ? `${esc(ev.name)} · live until ${esc(ev.ends_at)}` : 'No event is live right now'}
         </div>
       </div>
 
-      <div class="stat-grid" style="margin:14px 0 0">
+      <div class="stat-grid" style="margin-bottom:0">
         ${stats.map(s => `<div class="stat-tile"><div class="lbl">${s.label}</div><div class="val">${esc(s.value)}</div><div class="sub">${esc(s.sub)}</div></div>`).join('')}
       </div>
 
-      <div class="admin-panel">
+      <div class="panel">
         <span class="eyebrow">Participation</span>
         <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
         <div class="panel-meta">
           <span>${ev ? `${fmt(t.participants)} of ${fmt(t.capacity)} devotees have submitted` : 'Waiting for the next event'}</span>
-          <span style="color:var(--gold-label)">${ev ? pct + '%' : ''}</span>
+          <span>${ev ? pct + '%' : ''}</span>
         </div>
-        <div class="panel-rule"></div>
         <div class="btn-row">
-          <button type="button" class="btn-solid-sm" data-action="new-event">New event</button>
-          <button type="button" class="btn-ghost-sm" data-action="export-csv">Export CSV</button>
+          <button type="button" class="btn-fill" data-action="new-event">New Event</button>
+          <button type="button" class="btn-line" data-action="export-csv">Export CSV</button>
         </div>
       </div>
 
-      ${top.length ? `<div class="top-list">
-        <div class="hd">Top offerings today</div>
+      ${top.length ? `<div class="list-card">
+        <div class="top-hd">Top offerings today</div>
         ${top.map((p, i) => `
           <div class="top-row">
             <div class="rk">${i + 1}</div>
@@ -544,8 +526,6 @@
       </div>` : ''}
     </div>`;
   }
-
-  /* ----- Admin: Events ----- */
 
   function eventMeta(e) {
     switch (e.status) {
@@ -560,7 +540,7 @@
       case 'active':   return { label: 'Close event', action: 'close-event' };
       case 'upcoming': return { label: 'Activate', action: 'activate-event' };
       case 'closed':   return { label: 'Reopen', action: 'reopen-event' };
-      default:         return { label: 'Edit', action: 'edit-event' };
+      default:         return { label: 'Publish', action: 'activate-event' };
     }
   }
 
@@ -570,8 +550,8 @@
       (order[a.status] - order[b.status]) || b.event_date.localeCompare(a.event_date));
     return `<div class="pad-lg">
       <div class="admin-header-row">
-        <h2 class="h-serif" style="font-size:24px;margin:0">Events</h2>
-        <button type="button" class="btn-saffron" data-action="new-event">+ New</button>
+        <h2 class="h2" style="margin:0">Events</h2>
+        <button type="button" class="btn-new" data-action="new-event">+ New</button>
       </div>
       ${events.map(e => {
         const p = eventPrimary(e);
@@ -591,11 +571,9 @@
     </div>`;
   }
 
-  /* ----- Admin: Devotees ----- */
-
   function viewAdminDevotees() {
     return `<div class="pad-lg">
-      <h2 class="h-serif" style="font-size:24px;margin:0 0 14px">Devotees</h2>
+      <h2 class="h2" style="margin-bottom:12px">Devotees</h2>
       <input type="text" id="devotee-search" class="search-field" placeholder="Search name or devotee ID">
       <div id="devotee-list-wrap">${devoteeListHtml()}</div>
     </div>`;
@@ -614,11 +592,11 @@
         </div>
         <div class="cnt">
           <div class="n">${p.rounds}</div>
-          <div class="st" style="color:${p.rounds > 0 ? '#5F8A66' : '#B0836A'}">${p.rounds > 0 ? 'Submitted' : 'Pending'}</div>
+          <div class="st" style="color:${p.rounds > 0 ? '#2F7D45' : '#B3ACA1'}">${p.rounds > 0 ? 'Submitted' : 'Pending'}</div>
         </div>
       </div>`).join('');
     return `<div class="list-meta"><span>${people.length} devotee${people.length === 1 ? '' : 's'}</span><span>Sorted by rounds</span></div>
-      <div class="devotee-list">${rows}</div>
+      <div class="list-card">${rows}</div>
       ${people.length === 0 ? `<p class="empty-note">${ui.query ? `No devotee matches “${esc(ui.query)}”.` : 'No devotees yet.'}</p>` : ''}`;
   }
 
@@ -652,10 +630,10 @@
     const num = $('#draft-num'), hint = $('#draft-hint');
     if (!num) return;
     num.textContent = ui.draft === '' ? String(data.mine) : ui.draft;
-    num.style.color = ui.draft === '' ? 'rgba(74,27,31,.28)' : '#4A1B1F';
+    num.style.color = ui.draft === '' ? '#B3ACA1' : '#221F1B';
     hint.textContent = ui.capped ? `Maximum ${MAX_ROUNDS} rounds`
       : (ui.draft === '' ? 'Currently recorded — type to replace' : 'Rounds');
-    hint.style.color = ui.capped ? '#8C2F26' : '#A8845A';
+    hint.style.color = ui.capped ? '#C0392B' : '#B3ACA1';
   }
 
   async function saveRounds() {
@@ -694,16 +672,16 @@
       ends_at: $('#ef-end').value || '23:59',
       goal_rounds: Math.max(100, parseInt($('#ef-goal').value, 10) || 3000),
       description: $('#ef-desc').value.trim(),
-      visibility: ($('.vis-option.on') || {}).dataset ? $('.vis-option.on').dataset.vis : 'names'
+      visibility: $('.vis-option.on') ? $('.vis-option.on').dataset.vis : 'names'
     };
     const btn = $('[data-action="submit-event-form"]');
     const label = btn.textContent;
     btn.disabled = true;
     btn.textContent = 'Saving…';
     try {
-      if (ui.editEventId) await store.updateEvent(ui.editEventId, payload);
-      else await store.createEvent(payload);
       const wasEdit = !!ui.editEventId;
+      if (wasEdit) await store.updateEvent(ui.editEventId, payload);
+      else await store.createEvent(payload);
       ui.editEventId = null;
       closeOverlay();
       await reload();
@@ -729,7 +707,7 @@
     if (!ev) { toast('No event to export yet.'); return; }
     try {
       const people = await store.devotees(ev.id);
-      const rows = [['Name', 'Devotee ID', 'Phone', 'Rounds', 'Names chanted', 'Time']];
+      const rows = [['Name', 'Devotee ID', 'Phone', 'Rounds', 'Holy names', 'Time']];
       people.forEach(p => rows.push([p.name, p.devoteeId, p.phone, p.rounds, p.rounds * NAMES_PER_ROUND, p.time]));
       const csv = rows.map(r => r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
       const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
@@ -757,11 +735,11 @@
         <div class="scrim" data-action="close-overlay"></div>
         <div class="sheet">
           <div class="grabber"></div>
-          <h3 style="text-align:center">How many rounds have you completed?</h3>
-          <p class="sheet-sub">${esc(ev.name)} · you can update this any time today</p>
+          <h3 style="text-align:center">How many rounds today?</h3>
+          <p class="sheet-sub">You can update this any time until ${esc(ev.ends_at)}</p>
           <div class="draft-box">
-            <div class="draft-num" id="draft-num" style="color:rgba(74,27,31,.28)">${data.mine}</div>
-            <div class="draft-hint" id="draft-hint" style="color:#A8845A">Currently recorded — type to replace</div>
+            <div class="draft-num" id="draft-num" style="color:#B3ACA1">${data.mine}</div>
+            <div class="draft-hint" id="draft-hint" style="color:#B3ACA1">Currently recorded — type to replace</div>
           </div>
           <div class="keypad">
             ${keyDefs.map(k => `<button type="button"
@@ -780,8 +758,7 @@
       const e = edit || {
         name: 'Ekadashi Japa Seva',
         event_date: '', status: 'upcoming', starts_at: '00:00', ends_at: '23:59',
-        goal_rounds: 3000, visibility: 'names',
-        description: 'Offer your chanting with devotion. Rounds can be updated until midnight.'
+        goal_rounds: 3000, visibility: 'names', description: ''
       };
       const visOpts = [
         { key: 'names', label: 'Public within group', desc: 'Everyone sees name + rounds' },
@@ -816,7 +793,7 @@
             <div><label class="field-label" for="ef-desc">Description</label>
               <textarea class="field" id="ef-desc">${esc(e.description || '')}</textarea></div>
             <div>
-              <div class="field-label" style="margin-bottom:7px">Leaderboard visibility</div>
+              <div class="field-label">Leaderboard visibility</div>
               <div class="form-col" style="gap:7px">
                 ${visOpts.map(v => `
                   <div class="vis-option${e.visibility === v.key ? ' on' : ''}" data-vis="${v.key}">

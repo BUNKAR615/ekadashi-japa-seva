@@ -14,7 +14,7 @@ create table if not exists public.profiles (
   name        text not null,
   devotee_id  text unique,
   phone       text,
-  group_name  text default 'Marwad Youth Bhakti Vriksha',
+  group_name  text default 'Jodhpur Youth Bhakti Vriksha',
   is_admin    boolean not null default false,
   created_at  timestamptz not null default now()
 );

@@ -96,7 +96,7 @@
           s.user = {
             name: email.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
             email, devoteeId: 'HKMM001', phone: '+91 98280 41172',
-            group: 'Marwad Youth Bhakti Vriksha', isAdmin: true
+            group: 'Jodhpur Youth Bhakti Vriksha', isAdmin: true
           };
         } else { s.user.email = email; }
         save();
@@ -106,7 +106,7 @@
       async signUp(email, _pass, name) {
         s.user = {
           name, email, devoteeId: 'HKMM001', phone: '+91 98280 41172',
-          group: 'Marwad Youth Bhakti Vriksha', isAdmin: true
+          group: 'Jodhpur Youth Bhakti Vriksha', isAdmin: true
         };
         save();
         return { user: s.user, needsConfirmation: false };

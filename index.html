@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Ekadashi Japa Seva · Hare Krishna Marwad Mandir</title>
-<meta name="theme-color" content="#4A1B1F">
-<meta name="description" content="Record your Ekadashi japa rounds and see the group's offering — Hare Krishna Marwad Mandir.">
+<title>Ekadashi Japa Seva · Hare Krishna Mandir, Jodhpur</title>
+<meta name="theme-color" content="#F7F5F1">
+<meta name="description" content="Record your chanting rounds on Ekadashi and see what the temple community offers together — Hare Krishna Mandir, Jodhpur.">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="assets/favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="assets/icon-192.png">
@@ -14,33 +14,25 @@
 <meta name="apple-mobile-web-app-title" content="Japa Seva">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Yeseva+One&family=Jost:wght@300;400;500;600&family=Tiro+Devanagari+Sanskrit&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Tiro+Devanagari+Sanskrit&display=swap" rel="stylesheet">
 <!-- ?v= is bumped on every release so phones never run a stale cached copy -->
-<link rel="stylesheet" href="styles.css?v=3">
+<link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
 <div id="frame">
 
-  <!-- ===== Welcome (direction 1a — Arch & jali) ===== -->
+  <!-- ===== Welcome (2a) ===== -->
   <section id="welcome" class="screen">
-    <div class="jali-band"></div>
     <div class="welcome-inner">
-      <div class="welcome-brand">
-        <img src="assets/hkm-marwar-logo.jpg" alt="Hare Krishna Marwad Mandir" width="46" height="39">
-        <div class="brand-eyebrow">Hare Krishna</div>
-        <div class="brand-name">Marwad Mandir</div>
+      <img class="welcome-logo" src="assets/hkm-jodhpur-logo.png" alt="Hare Krishna Mandir, Jodhpur">
+      <div class="welcome-portrait">
+        <img src="assets/prabhupada-circle.png" alt="Srila Prabhupada">
       </div>
-      <div class="arch-photo">
-        <img src="assets/prabhupada.jpg" alt="Śrīla Prabhupāda">
-      </div>
-      <div class="gold-divider"><span class="line"></span><span class="dot"></span><span class="line"></span></div>
-      <p class="welcome-quote">“Chant Hare Krishna and be happy.”</p>
-      <div class="quote-attrib">Śrīla Prabhupāda</div>
+      <h1 class="welcome-title">Ekadashi Japa Seva</h1>
+      <p class="welcome-sub">Record your chanting rounds on Ekadashi and see what the temple community offers together.</p>
 
       <form id="auth-form" class="auth-card" autocomplete="off">
-        <h2 id="auth-title">Hare Krishna 🙏</h2>
-        <p id="auth-sub" class="auth-sub">Welcome to Hare Krishna Marwad Mandir</p>
-        <div id="auth-name-block" class="field-block hidden">
+        <div id="auth-name-block" class="hidden">
           <label class="field-label" for="auth-name">Full name</label>
           <input class="field" id="auth-name" type="text" placeholder="Your name">
         </div>
@@ -50,24 +42,18 @@
         <input class="field" id="auth-pass" type="password" placeholder="••••••••" required>
         <p id="auth-error" class="auth-error hidden"></p>
         <button type="submit" class="btn-primary" id="auth-submit">Sign In</button>
-        <p class="auth-switch" id="auth-switch">Don’t have an account? <a href="#" id="auth-toggle">Create Account</a></p>
+        <p class="auth-switch" id="auth-switch">New here? <a href="#" id="auth-toggle">Create Account</a></p>
       </form>
 
-      <p class="welcome-footer">Chant • Remember • Serve</p>
+      <p class="welcome-footer">Chant Hare Krishna and Be Happy</p>
     </div>
   </section>
 
-  <!-- ===== App shell (1d) ===== -->
+  <!-- ===== App shell (2b) ===== -->
   <div id="app" class="screen hidden">
     <header id="appbar">
-      <div class="appbar-brand">
-        <img src="assets/hkm-marwar-logo.jpg" alt="" width="30" height="25">
-        <div>
-          <div class="brand-eyebrow sm">Hare Krishna</div>
-          <div class="brand-name sm">Marwad Mandir</div>
-        </div>
-      </div>
-      <div class="role-toggle" id="role-toggle">
+      <img class="brand-logo" src="assets/hkm-jodhpur-logo.png" alt="Hare Krishna Mandir, Jodhpur">
+      <div class="role-toggle hidden" id="role-toggle">
         <button type="button" data-role="devotee">Devotee</button>
         <button type="button" data-role="admin">Admin</button>
       </div>
@@ -76,20 +62,20 @@
     <nav id="tabbar"></nav>
   </div>
 
-  <!-- ===== Overlays: sheets, toast, loading ===== -->
+  <!-- ===== Overlays ===== -->
   <div id="overlay-root"></div>
 
   <div id="loading" class="loading-overlay hidden">
     <div class="loading-card">
       <div class="pulse-ring"><span></span></div>
-      <p>Preparing your Japa dashboard…</p>
+      <p>Preparing your dashboard…</p>
     </div>
   </div>
 
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=3"></script>
-<script src="store.js?v=3"></script>
-<script src="app.js?v=3"></script>
+<script src="config.js?v=5"></script>
+<script src="store.js?v=5"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>
