@@ -193,12 +193,21 @@
     let profile = null;
 
     async function loadProfile(userId) {
-      const { data, error } = await sb
-        .from('profiles')
-        .select('id,name,devotee_id,group_name,is_admin')
-        .eq('id', userId)
-        .single();
+      // The profile is created by a trigger on signup. On the very first
+      // sign-in that row can lag by a moment, so retry briefly instead of
+      // failing the whole sign-in.
+      let data = null, error = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        ({ data, error } = await sb
+          .from('profiles')
+          .select('id,name,devotee_id,group_name,is_admin')
+          .eq('id', userId)
+          .maybeSingle());
+        if (data) break;
+        if (attempt < 2) await new Promise(r => setTimeout(r, 400));
+      }
       if (error) throw error;
+      if (!data) throw new Error('Your devotee profile is still being set up. Please try signing in again in a moment.');
       return {
         id: data.id,
         name: data.name,

@@ -1,18 +1,20 @@
 /* ============================================================
    Supabase connection settings.
 
-   Paste the two values from your Supabase dashboard:
+   These two values come from the Supabase dashboard:
      Project Settings > Data API  ->  Project URL
-     Project Settings > API Keys  ->  anon / public key
+     Project Settings > API Keys  ->  anon / publishable key
 
-   Leave them blank and the app runs in demo mode (data saved only
-   in this browser), so the site keeps working before it is connected.
+   The publishable key is designed to be public — it is safe here and
+   in the public repo. Every real permission is enforced by the row
+   level security policies in supabase/schema.sql, not by this file.
 
-   The anon key is designed to be public — it is safe in this file.
-   NEVER put the service_role key here; that one bypasses all security.
+   NEVER put the service_role / secret key here; it bypasses all security.
+
+   Blank these out to fall back to demo mode (data saved per browser).
    ============================================================ */
 
 window.JAPA_CONFIG = {
-  supabaseUrl: '',
-  supabaseAnonKey: ''
+  supabaseUrl: 'https://qziixgpvdlefvssmpnok.supabase.co',
+  supabaseAnonKey: 'sb_publishable_vha7NDSK5Z0u2bmG3pVGHA_FQ0HFLzD'
 };
