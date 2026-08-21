@@ -1,7 +1,7 @@
 {
   "name": "Ekadashi Japa Seva",
   "short_name": "Japa Seva",
-  "description": "Record your chanting rounds on Ekadashi and see what the temple community offers together — Hare Krishna Mandir, Jodhpur.",
+  "description": "Record your chanting rounds on Ekadashi and see what the temple community offers together — Hare Krishna Marwad Mandir.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

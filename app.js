@@ -1,5 +1,5 @@
 /* ============================================================
-   Ekadashi Japa Seva — Hare Krishna Mandir, Jodhpur
+   Ekadashi Japa Seva — Hare Krishna Marwad Mandir
 
    All data access goes through window.JapaStore (see store.js), which
    is either the Supabase backend or the localStorage demo store.
@@ -10,7 +10,7 @@
   const MAX_ROUNDS = 216;
   const NAMES_PER_ROUND = 108;
 
-  // Aarti timings as published on hkmjodhpur.org
+  // Temple aarti timings
   const TIMINGS = [
     ['Mangala Arti', '4:30 AM'],
     ['Shringar Aarti', '7:30 AM'],

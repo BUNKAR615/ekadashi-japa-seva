@@ -1,8 +1,8 @@
 # Ekadashi Japa Seva
 
-A rounds-counter app for **Hare Krishna Mandir, Jodhpur** — devotees record their
+A rounds-counter app for **Hare Krishna Marwad Mandir** — devotees record their
 Ekadashi japa rounds, see the group's combined offering, and temple admins run
-events. Implemented from the Claude Design project *Japa Seva* (clean pass, matched to hkmjodhpur.org).
+events. Implemented from the Claude Design project *Japa Seva* (clean pass).
 
 **Live:** https://japa-seva.vercel.app
 
@@ -53,7 +53,7 @@ where id = (select id from auth.users where email = 'them@example.com');
 The **Admin** toggle appears in the header only for admin accounts.
 
 **5. Bump the cache version.** After changing `config.js`, edit `index.html` and
-raise `?v=5` to `?v=6` on the script and stylesheet tags, so phones pick up the
+raise `?v=6` to `?v=7` on the script and stylesheet tags, so phones pick up the
 new files instead of a cached copy.
 
 ### Email confirmation
@@ -90,7 +90,7 @@ so they hold even if someone edits the page in their browser:
 | `config.js` | Your Supabase keys (blank = demo mode) |
 | `supabase/schema.sql` | Tables, policies and functions; run once in the SQL Editor |
 | `manifest.webmanifest` | Installable-app metadata — devotees can add it to their home screen |
-| `assets/` | Temple logo and Srila Prabhupada portrait (from hkmjodhpur.org), plus generated app icons |
+| `assets/` | Temple logo, Srila Prabhupada portrait, and generated app icons |
 
 ## Features
 

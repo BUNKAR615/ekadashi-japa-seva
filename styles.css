@@ -1,6 +1,6 @@
 /* ============================================================
-   Ekadashi Japa Seva — Hare Krishna Mandir, Jodhpur
-   Clean pass, matched to hkmjodhpur.org.
+   Ekadashi Japa Seva — Hare Krishna Marwad Mandir
+   Clean pass: one idea per screen, neutral surfaces, saffron accent.
    Palette: paper #F7F5F1 · card #fff · ink #221F1B
             muted #8D867C · faint #B3ACA1 · saffron #D9772E
    Type:    Poppins throughout, Tiro Devanagari for the mahamantra
@@ -65,14 +65,13 @@ button{cursor:pointer}
   min-height:100%;display:flex;flex-direction:column;align-items:center;
   padding:56px 30px 30px;text-align:center;
 }
-.welcome-logo{height:64px;width:auto}
+.welcome-logo{height:64px;width:auto;max-width:180px;object-fit:contain}
 .welcome-portrait{
   width:104px;height:104px;border-radius:50%;overflow:hidden;
   margin:34px 0 0;background:var(--sunk);flex:none;
 }
 .welcome-portrait img{width:100%;height:100%;object-fit:cover;display:block}
 .welcome-title{font-weight:600;font-size:25px;letter-spacing:-.02em;margin:22px 0 0;color:var(--ink)}
-.welcome-sub{margin:10px 0 0;font-size:13.5px;line-height:1.65;color:var(--body);max-width:280px}
 
 .auth-card{width:100%;margin:30px 0 0;text-align:left}
 .field-label{
@@ -102,7 +101,7 @@ button{cursor:pointer}
   flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;
   padding:calc(8px + env(safe-area-inset-top)) 18px 10px;
 }
-#appbar .brand-logo{height:32px;width:auto}
+#appbar .brand-logo{height:32px;width:auto;max-width:96px;object-fit:contain}
 .role-toggle{display:flex;gap:3px;background:var(--chip);border-radius:10px;padding:3px}
 .role-toggle button{
   border:0;border-radius:8px;padding:6px 11px;font-size:11px;font-weight:500;
