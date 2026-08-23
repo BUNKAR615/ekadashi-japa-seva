@@ -99,9 +99,9 @@ so they hold even if someone edits the page in their browser:
 ## Features
 
 **Devotee** — three tabs. Japa (today's rounds, numeric keypad capped at 216,
-lotus toast on save; multi-day challenges accumulate day by day), Together
-(group stats + the leaderboard the admin has made visible), and Me (profile,
-challenge history, temple aarti timings, sign out).
+lotus toast on save; multi-day challenges accumulate day by day), Leaderboard
+(group stats + the current challenge's leaders, shown the way the admin
+configured), and Me (profile, challenge history, sign out).
 
 **Admin** (header toggle, only shown to admins):
 
@@ -111,8 +111,8 @@ challenge history, temple aarti timings, sign out).
   the database enforces it.
 - **Leaderboard controls** — per-challenge visibility (names, devotee IDs,
   admin-only, or fully off) and a ranking parameter (total rounds or daily
-  progress). The Overview tab chooses which challenge's leaderboard devotees
-  see — automatic (the live one) or any past challenge.
+  progress). One challenge runs at a time, and the Leaderboard tab always
+  shows that challenge.
 - **Admin roles** — promote or demote any devotee from the Devotees tab.
   The database guarantees at least one admin always remains.
 - **Overview** — participation, top offerings, CSV export.

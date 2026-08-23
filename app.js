@@ -10,25 +10,13 @@
   const MAX_ROUNDS = 216;
   const NAMES_PER_ROUND = 108;
 
-  // Temple aarti timings
-  const TIMINGS = [
-    ['Mangala Arti', '4:30 AM'],
-    ['Shringar Aarti', '7:30 AM'],
-    ['Bhagvatam Class', '8:15 AM'],
-    ['Rajbhog Aarti', '12:00 PM'],
-    ['Sandhya Aarti', '7:00 PM'],
-    ['Shayan Aarti', '8:30 PM']
-  ];
-
   let store = null;
 
   const data = {
     user: null, events: [],
-    event: null,                 // the challenge you submit rounds to (active, else last closed)
-    boardEvent: null,            // the challenge whose leaderboard is displayed (admin's choice)
+    event: null,                 // the one current challenge (active, else last closed)
     mine: 0,
     totals: { total: 0, participants: 0, average: 0, highest: 0, capacity: 0 },
-    boardTotals: { total: 0, participants: 0, average: 0, highest: 0, capacity: 0 },
     leaders: [], activeLeaders: [], devotees: [], history: []
   };
 
@@ -83,11 +71,6 @@
     const ev = activeEvent() || lastClosed() || null;
     data.event = ev;
 
-    // The displayed leaderboard: the admin's featured challenge, else the
-    // same challenge devotees are submitting to.
-    const be = data.events.find(e => e.featured) || ev;
-    data.boardEvent = be;
-
     if (ev) {
       const [mine, totals] = await Promise.all([
         store.myRounds(ev.id),
@@ -100,20 +83,17 @@
       data.totals = { total: 0, participants: 0, average: 0, highest: 0, capacity: 0 };
     }
 
-    if (be) {
-      data.boardTotals = (ev && be.id === ev.id) ? data.totals : await store.eventTotals(be.id);
-      const hidden = be.visibility === 'off' || (be.visibility === 'admin' && !isAdmin());
-      data.leaders = hidden ? [] : await store.leaderboard(be.id);
+    if (ev) {
+      const hidden = ev.visibility === 'off' || (ev.visibility === 'admin' && !isAdmin());
+      data.leaders = hidden ? [] : await store.leaderboard(ev.id);
     } else {
-      data.boardTotals = { total: 0, participants: 0, average: 0, highest: 0, capacity: 0 };
       data.leaders = [];
     }
 
-    // Admin overview always ranks the live challenge, whatever is featured.
+    // Admin overview still ranks the challenge even when the public
+    // leaderboard is hidden or off.
     if (isAdmin() && ev) {
-      data.activeLeaders = (be && be.id === ev.id && data.leaders.length)
-        ? data.leaders
-        : await store.leaderboard(ev.id);
+      data.activeLeaders = data.leaders.length ? data.leaders : await store.leaderboard(ev.id);
     } else {
       data.activeLeaders = [];
     }
@@ -258,7 +238,7 @@
 
   const DEV_TABS = [
     { key: 'japa', label: 'Japa' },
-    { key: 'together', label: 'Together' },
+    { key: 'together', label: 'Leaderboard' },
     { key: 'me', label: 'Me' }
   ];
   const ADM_TABS = [
@@ -382,14 +362,14 @@
   /* ----- Together ----- */
 
   function viewTogether() {
-    const ev = data.boardEvent;
+    const ev = data.event;
     if (!ev) {
       return `<div class="pad-lg">
-        <h2 class="h2">Together</h2>
-        <p class="sub">No challenge yet — the group offering will appear here.</p>
+        <h2 class="h2">Leaderboard</h2>
+        <p class="sub">No challenge yet — the leaderboard will appear here.</p>
       </div>`;
     }
-    const t = data.boardTotals;
+    const t = data.totals;
     const daily = ev.rank_by === 'daily';
     const people = rankSorted(data.leaders, ev);
     const off = ev.visibility === 'off';
@@ -438,7 +418,7 @@
     }
 
     return `<div class="pad-lg">
-      <h2 class="h2">Together</h2>
+      <h2 class="h2">Leaderboard</h2>
       <p class="sub">${esc(ev.name)} · ${esc(dateRange(ev))}</p>
       <div class="stat-grid">
         ${stats.map(s => `<div class="stat-tile"><div class="lbl">${s.label}</div><div class="val">${s.value}</div></div>`).join('')}
@@ -478,7 +458,7 @@
       { label: 'Devotee ID', value: u.devoteeId || '—' },
       { label: 'Email', value: u.email || '—' },
       { label: 'Group', value: u.group || '—' },
-      { label: 'Role', value: u.isAdmin ? 'Temple admin' : 'Devotee' }
+      { label: 'Role', value: u.isAdmin ? 'Admin' : 'User' }
     ];
     return `<div class="pad">
       <div class="card profile-card">
@@ -497,11 +477,6 @@
         ${rows.map(r => `<div class="profile-row"><span class="l">${r.label}</span><span class="v">${esc(r.value)}</span></div>`).join('')}
       </div>
 
-      <div class="timings-card">
-        <span class="eyebrow">Temple timings</span>
-        ${TIMINGS.map(([t, v]) => `<div class="timing"><span class="t">${t}</span><span class="v">${v}</span></div>`).join('')}
-      </div>
-
       <button type="button" class="btn-outline" data-action="sign-out">Sign Out</button>
       <p class="me-footer">Chant Hare Krishna and Be Happy</p>
     </div>`;
@@ -514,8 +489,6 @@
     const t = data.totals;
     const pct = ev && t.capacity ? Math.round((t.participants / t.capacity) * 100) : 0;
     const top = ev ? rankSorted(data.activeLeaders, ev).slice(0, 4) : [];
-    const be = data.boardEvent;
-    const featured = data.events.find(e => e.featured);
 
     const stats = ev ? [
       { label: 'Live challenge', value: ev.name.split(' ')[0], sub: `${dateRange(ev)} · until ${ev.ends_at}` },
@@ -528,8 +501,6 @@
       { label: 'Total rounds', value: '—', sub: 'no challenge' },
       { label: 'Average rounds', value: '—', sub: 'no challenge' }
     ];
-
-    const selectable = data.events.filter(e => e.status !== 'draft');
 
     return `<div class="pad">
       <div class="card admin-head">
@@ -554,21 +525,6 @@
         <div class="btn-row">
           <button type="button" class="btn-fill" data-action="new-event">New Challenge</button>
           <button type="button" class="btn-line" data-action="export-csv">Export CSV</button>
-        </div>
-      </div>
-
-      <div class="panel">
-        <span class="eyebrow">Leaderboard shown to devotees</span>
-        <select id="featured-select" class="field" style="margin-bottom:0;height:46px">
-          <option value=""${featured ? '' : ' selected'}>Automatic — the live challenge</option>
-          ${selectable.map(e => `<option value="${e.id}"${featured && featured.id === e.id ? ' selected' : ''}>${esc(e.name)} · ${esc(dateRange(e))}</option>`).join('')}
-        </select>
-        <div class="panel-meta">
-          <span>${be
-            ? `Now showing: ${esc(be.name)} · ${be.visibility === 'off' ? 'leaderboard off' :
-                be.visibility === 'admin' ? 'admins only' :
-                be.visibility === 'ids' ? 'devotee IDs' : 'names'} · ranked by ${be.rank_by === 'daily' ? 'daily progress' : 'total rounds'}`
-            : 'Nothing to display yet'}</span>
         </div>
       </div>
 
@@ -623,7 +579,7 @@
             <span class="dt">${esc(dateRange(e))}</span>
             <span class="chip ${e.status}">${e.status.charAt(0).toUpperCase() + e.status.slice(1)}</span>
           </div>
-          <div class="nm">${esc(e.name)}${e.featured ? ' <span class="admin-tag">on board</span>' : ''}</div>
+          <div class="nm">${esc(e.name)}</div>
           <div class="meta">${esc(eventMeta(e))}</div>
           <div class="event-actions">
             <button type="button" data-action="${p.action}" data-id="${e.id}">${p.label}</button>
@@ -976,16 +932,6 @@
       case 'toggle-admin':
         await toggleAdmin(t.dataset.id, t.dataset.make === '1', t.dataset.name);
         break;
-    }
-  });
-
-  document.addEventListener('change', async ev => {
-    if (ev.target.id === 'featured-select') {
-      try {
-        await store.setFeatured(ev.target.value || null);
-        await reload();
-        toast('Displayed leaderboard updated.');
-      } catch (e) { showError(e.message); }
     }
   });
 
