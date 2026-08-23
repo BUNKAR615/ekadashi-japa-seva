@@ -71,7 +71,11 @@
         adminOverrides: {}
       };
     }
-    // Normalise states saved by older versions.
+    // Normalise states saved by older versions, and repair anything
+    // corrupted so a bad payload can never break the app.
+    if (!s || typeof s !== 'object') s = {};
+    if (!Array.isArray(s.events) || s.events.length === 0) s.events = seedEvents();
+    if (!s.mySubmissions || typeof s.mySubmissions !== 'object') s.mySubmissions = {};
     s.adminOverrides = s.adminOverrides || {};
     (s.events || []).forEach(e => {
       if (!e.end_date) e.end_date = e.event_date;

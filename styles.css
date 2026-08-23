@@ -102,12 +102,10 @@ button{cursor:pointer}
   padding:calc(8px + env(safe-area-inset-top)) 18px 10px;
 }
 #appbar .brand-logo{height:32px;width:auto;max-width:96px;object-fit:contain}
-.role-toggle{display:flex;gap:3px;background:var(--chip);border-radius:10px;padding:3px}
-.role-toggle button{
-  border:0;border-radius:8px;padding:6px 11px;font-size:11px;font-weight:500;
-  background:transparent;color:var(--muted);
+.role-badge{
+  font-size:10px;letter-spacing:.1em;text-transform:uppercase;font-weight:500;
+  padding:5px 11px;border-radius:20px;background:rgba(217,119,46,.12);color:#A8551C;
 }
-.role-toggle button.on{background:var(--ink);color:#fff}
 
 #content{flex:1;overflow-y:auto;padding:0 0 96px}
 #tabbar{
@@ -372,3 +370,47 @@ button{cursor:pointer}
 
 /* Selects share the field look */
 select.field{appearance:auto;-webkit-appearance:auto}
+
+
+/* ---------- Admin hub: segmented sub-nav ---------- */
+.admin-wrap{padding-top:8px}
+.segmented{
+  display:flex;gap:3px;margin:0 18px 4px;padding:3px;
+  background:var(--chip);border-radius:12px;
+}
+.seg{
+  flex:1;border:0;border-radius:9px;padding:9px 6px;font-size:12px;font-weight:500;
+  background:transparent;color:var(--muted);
+}
+.seg.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(34,31,27,.1)}
+
+/* ---------- Challenge completed ---------- */
+.completed-banner{
+  margin:12px 0 0;padding:9px 12px;border-radius:12px;text-align:center;
+  background:rgba(63,164,91,.12);color:#2F7D45;
+  font-size:12px;font-weight:600;letter-spacing:.02em;
+}
+
+/* ---------- Percentage of goal ---------- */
+.pct-big{
+  margin-left:auto;font-weight:500;font-size:20px;letter-spacing:-.02em;
+  color:var(--saffron);line-height:1;
+}
+.pct-big.done{color:var(--green)}
+
+.progress-card{padding:18px 22px 20px}
+.pct-row{display:flex;align-items:center;gap:14px;margin-bottom:14px}
+.pct-huge{
+  font-weight:300;font-size:52px;line-height:1;letter-spacing:-.04em;color:var(--saffron);
+}
+.pct-huge.done{color:var(--green)}
+.pct-side{min-width:0}
+.pct-label{font-size:13px;font-weight:500;color:var(--ink)}
+.pct-sub{font-size:12px;color:var(--muted);margin-top:2px}
+.progress-fill.done{background:var(--green)}
+
+/* Primary action inside a challenge card */
+.event-actions button.primary{
+  background:var(--saffron);color:#fff;border-color:transparent;
+}
+.event-actions button.primary:active{background:#C56A26}

@@ -98,17 +98,25 @@ so they hold even if someone edits the page in their browser:
 
 ## Features
 
-**Devotee** — three tabs. Japa (today's rounds, numeric keypad capped at 216,
+**Devotee** — three tabs: Japa (today's rounds, numeric keypad capped at 216,
 lotus toast on save; multi-day challenges accumulate day by day), Leaderboard
-(group stats + the current challenge's leaders, shown the way the admin
-configured), and Me (profile, challenge history, sign out).
+(percentage of the goal completed, group stats, and the current challenge's
+leaders as the admin configured them), and Me (profile, challenge history,
+sign out).
+
+**Admins keep every devotee ability** and gain a fourth tab. There is no mode
+switch: an admin records their own rounds and appears on the leaderboard like
+anyone else, and the Admin tab adds Overview / Challenges / Devotees.
 
 **Admin** (header toggle, only shown to admins):
 
 - **Challenges** — create / edit / start / close / reopen, with a start and
   end date, daily open/close times, group goal, description/rules, ranking
-  parameter and leaderboard visibility. Only admins can start a challenge;
-  the database enforces it.
+  parameter and leaderboard visibility. A live challenge can be edited
+  mid-flight: extend the dates or closing time and raise the goal without
+  losing any rounds already offered. Only admins can start a challenge;
+  the database enforces it. Closing one shows "Challenge completed" to
+  everyone.
 - **Leaderboard controls** — per-challenge visibility (names, devotee IDs,
   admin-only, or fully off) and a ranking parameter (total rounds or daily
   progress). One challenge runs at a time, and the Leaderboard tab always

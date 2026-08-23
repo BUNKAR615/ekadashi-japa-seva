@@ -21,7 +21,7 @@
   };
 
   const ui = {
-    role: 'devotee', tab: 'japa',
+    tab: 'japa', adminSection: 'overview',
     sheet: null, draft: '', capped: false,
     query: '', editEventId: null,
     toastTimer: null, busy: false
@@ -100,7 +100,7 @@
 
     data.history = await store.myHistory();
 
-    if (ui.role === 'admin' && isAdmin() && ui.tab === 'aDevotees') {
+    if (isAdmin() && ui.tab === 'admin' && ui.adminSection === 'devotees') {
       try { data.devotees = await store.devotees(ev ? ev.id : null); }
       catch (e) { data.devotees = []; }
     }
@@ -189,16 +189,16 @@
     $('#welcome').classList.add('hidden');
     $('#app').classList.remove('hidden');
     $('#loading').classList.add('hidden');
-    ui.role = 'devotee';
     ui.tab = 'japa';
+    ui.adminSection = 'overview';
     render();
   }
 
   async function signOut() {
     await store.signOut();
     data.user = null;
-    ui.role = 'devotee';
     ui.tab = 'japa';
+    ui.adminSection = 'overview';
     closeOverlay();
     $('#app').classList.add('hidden');
     $('#welcome').classList.remove('hidden');
@@ -228,12 +228,10 @@
   }
 
   function renderHeader() {
-    const toggle = $('#role-toggle');
-    // The Admin pill only exists for accounts the backend marks as admins.
-    toggle.classList.toggle('hidden', !isAdmin());
-    toggle.querySelectorAll('button').forEach(b => {
-      b.classList.toggle('on', b.dataset.role === ui.role);
-    });
+    // Admins keep every devotee ability and gain the Admin tab; the badge
+    // is informational, not a mode switch.
+    const badge = $('#role-badge');
+    badge.classList.toggle('hidden', !isAdmin());
   }
 
   const DEV_TABS = [
@@ -242,14 +240,14 @@
     { key: 'me', label: 'Me' }
   ];
   const ADM_TABS = [
-    { key: 'aOverview', label: 'Overview' },
-    { key: 'aEvents', label: 'Events' },
-    { key: 'aDevotees', label: 'Devotees' },
+    { key: 'japa', label: 'Japa' },
+    { key: 'together', label: 'Leaderboard' },
+    { key: 'admin', label: 'Admin' },
     { key: 'me', label: 'Me' }
   ];
 
   function renderTabs() {
-    const tabs = ui.role === 'admin' ? ADM_TABS : DEV_TABS;
+    const tabs = isAdmin() ? ADM_TABS : DEV_TABS;
     $('#tabbar').innerHTML = tabs.map(t => `
       <button type="button" class="tab-btn${ui.tab === t.key ? ' on' : ''}" data-tab="${t.key}">
         <span class="dot"></span><span class="lbl">${t.label}</span>
@@ -262,9 +260,7 @@
       case 'japa':      c.innerHTML = viewJapa(); break;
       case 'together':  c.innerHTML = viewTogether(); break;
       case 'me':        c.innerHTML = viewMe(); break;
-      case 'aOverview': c.innerHTML = viewAdminOverview(); break;
-      case 'aEvents':   c.innerHTML = viewAdminEvents(); break;
-      case 'aDevotees': c.innerHTML = viewAdminDevotees(); break;
+      case 'admin':     c.innerHTML = viewAdmin(); break;
       default:          c.innerHTML = viewJapa();
     }
     c.scrollTop = 0;
@@ -299,15 +295,17 @@
     const closed = ev.status !== 'active';
     const rounds = data.mine;
     const t = data.totals;
-    const pct = ev.goal_rounds ? Math.min(100, Math.round((t.total / ev.goal_rounds) * 100)) : 0;
+    const pct = ev.goal_rounds ? Math.round((t.total / ev.goal_rounds) * 100) : 0;
+    const barPct = Math.min(100, pct);
     const eyebrow = isMultiDay(ev) ? dateRange(ev) : `Ekadashi · ${fmtDateShort(ev.event_date)}`;
 
     return `<div class="pad">
       <div class="card event-card">
         <div class="event-top">
           <span class="eyebrow">${esc(eyebrow)}</span>
-          <span class="chip ${closed ? 'closed' : 'active'}">${closed ? 'Closed' : 'Active'}</span>
+          <span class="chip ${closed ? 'closed' : 'active'}">${closed ? 'Completed' : 'Active'}</span>
         </div>
+        ${closed ? '<div class="completed-banner">Challenge completed</div>' : ''}
         <h2 class="event-title">${esc(ev.name)}</h2>
         <div class="rounds-label">Your rounds today</div>
         <div class="rounds-num">${rounds}</div>
@@ -315,7 +313,7 @@
           ? 'Not recorded yet'
           : `${fmt(rounds * NAMES_PER_ROUND)} holy names`}</div>
         <button type="button" class="cta ${closed ? 'dead' : 'live'}" data-action="open-sheet">
-          ${closed ? 'Challenge closed' : (rounds === 0 ? 'Record my rounds' : 'Update Rounds')}
+          ${closed ? 'Challenge completed' : (rounds === 0 ? 'Record my rounds' : 'Update Rounds')}
         </button>
         <div class="cta-hint">${closed
           ? 'Your rounds are saved in your profile'
@@ -330,12 +328,13 @@
         <div class="group-row">
           <div class="group-num">${fmt(t.total)}</div>
           <div class="group-unit">rounds</div>
+          <div class="pct-big${pct >= 100 ? ' done' : ''}">${pct}%</div>
         </div>
         <div class="participants-line">${t.capacity
           ? `${fmt(t.capacity)} devotees registered · ${fmt(t.participants)} have submitted`
           : `${fmt(t.participants)} devotees have submitted`}</div>
-        <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
-        <div class="progress-meta"><span>${pct}% of the goal</span><span>${fmt(ev.goal_rounds)} goal</span></div>
+        <div class="progress-track"><div class="progress-fill${pct >= 100 ? ' done' : ''}" style="width:${barPct}%"></div></div>
+        <div class="progress-meta"><span>${pct}% of the goal completed</span><span>${fmt(ev.goal_rounds)} goal</span></div>
       </div>
 
       ${quoteCard()}${mantraBlock()}
@@ -375,12 +374,28 @@
     const off = ev.visibility === 'off';
     const privated = ev.visibility === 'admin' && !isAdmin();
 
+    const closed = ev.status !== 'active';
+    const pct = ev.goal_rounds ? Math.round((t.total / ev.goal_rounds) * 100) : 0;
+    const barPct = Math.min(100, pct);
+
     const stats = [
       { label: 'Total rounds', value: fmt(t.total) },
       { label: 'Participants', value: fmt(t.participants) },
       { label: 'Average', value: String(t.average) },
       { label: 'Highest', value: fmt(t.highest) }
     ];
+
+    const progress = `<div class="card progress-card">
+      ${closed ? '<div class="completed-banner">Challenge completed</div>' : ''}
+      <div class="pct-row">
+        <div class="pct-huge${pct >= 100 ? ' done' : ''}">${pct}%</div>
+        <div class="pct-side">
+          <div class="pct-label">of the goal completed</div>
+          <div class="pct-sub">${fmt(t.total)} of ${fmt(ev.goal_rounds)} rounds</div>
+        </div>
+      </div>
+      <div class="progress-track"><div class="progress-fill${pct >= 100 ? ' done' : ''}" style="width:${barPct}%"></div></div>
+    </div>`;
 
     let board;
     if (off) {
@@ -420,7 +435,8 @@
     return `<div class="pad-lg">
       <h2 class="h2">Leaderboard</h2>
       <p class="sub">${esc(ev.name)} · ${esc(dateRange(ev))}</p>
-      <div class="stat-grid">
+      ${progress}
+      <div class="stat-grid" style="margin-top:12px">
         ${stats.map(s => `<div class="stat-tile"><div class="lbl">${s.label}</div><div class="val">${s.value}</div></div>`).join('')}
       </div>
       ${board}
@@ -480,6 +496,25 @@
       <button type="button" class="btn-outline" data-action="sign-out">Sign Out</button>
       <p class="me-footer">Chant Hare Krishna and Be Happy</p>
     </div>`;
+  }
+
+  /* ----- Admin hub ----- */
+
+  const ADMIN_SECTIONS = [
+    { key: 'overview',  label: 'Overview' },
+    { key: 'events',    label: 'Challenges' },
+    { key: 'devotees',  label: 'Devotees' }
+  ];
+
+  function viewAdmin() {
+    if (!isAdmin()) return viewJapa();
+    const seg = `<div class="segmented">
+      ${ADMIN_SECTIONS.map(x => `<button type="button" class="seg${ui.adminSection === x.key ? ' on' : ''}" data-adminsec="${x.key}">${x.label}</button>`).join('')}
+    </div>`;
+    const body = ui.adminSection === 'events' ? viewAdminEvents()
+      : ui.adminSection === 'devotees' ? viewAdminDevotees()
+      : viewAdminOverview();
+    return `<div class="admin-wrap">${seg}${body}</div>`;
   }
 
   /* ----- Admin: Overview ----- */
@@ -582,8 +617,11 @@
           <div class="nm">${esc(e.name)}</div>
           <div class="meta">${esc(eventMeta(e))}</div>
           <div class="event-actions">
-            <button type="button" data-action="${p.action}" data-id="${e.id}">${p.label}</button>
-            <button type="button" data-action="edit-event" data-id="${e.id}">Edit</button>
+            ${e.status === 'active'
+              ? `<button type="button" class="primary" data-action="edit-event" data-id="${e.id}">Edit challenge</button>
+                 <button type="button" data-action="${p.action}" data-id="${e.id}">${p.label}</button>`
+              : `<button type="button" data-action="${p.action}" data-id="${e.id}">${p.label}</button>
+                 <button type="button" data-action="edit-event" data-id="${e.id}">Edit</button>`}
           </div>
         </div>`;
       }).join('')}
@@ -813,6 +851,9 @@
         <div class="sheet">
           <div class="grabber"></div>
           <h3>${edit ? 'Edit Japa Challenge' : 'New Japa Challenge'}</h3>
+          ${edit && edit.status === 'active'
+            ? '<p class="sheet-sub" style="text-align:left;margin:2px 0 0">This challenge is live. You can extend the dates or times and raise the goal — devotees keep the rounds they have already offered.</p>'
+            : ''}
           <div class="form-col" style="margin-top:16px">
             <div><label class="field-label" for="ef-name">Challenge name</label>
               <input class="field" id="ef-name" type="text" value="${esc(e.name)}"></div>
@@ -890,23 +931,18 @@
   /* ---------- Events ---------- */
 
   document.addEventListener('click', async ev => {
-    const t = ev.target.closest('[data-action],[data-tab],[data-role],[data-key],.vis-option');
+    const t = ev.target.closest('[data-action],[data-tab],[data-adminsec],[data-key],.vis-option');
     if (!t) return;
 
-    if (t.dataset.role) {
-      const role = t.dataset.role;
-      if (role === 'admin' && !isAdmin()) return;
-      if (role !== ui.role) {
-        ui.role = role;
-        ui.tab = role === 'admin' ? 'aOverview' : 'japa';
-        closeOverlay();
-        await reload();
-      }
+    if (t.dataset.adminsec) {
+      ui.adminSection = t.dataset.adminsec;
+      if (ui.adminSection === 'devotees') await reload();
+      else render();
       return;
     }
     if (t.dataset.tab) {
       ui.tab = t.dataset.tab;
-      if (t.dataset.tab === 'aDevotees') await reload();
+      if (ui.tab === 'admin' && ui.adminSection === 'devotees') await reload();
       else render();
       return;
     }

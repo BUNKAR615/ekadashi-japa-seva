@@ -16,7 +16,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Tiro+Devanagari+Sanskrit&display=swap" rel="stylesheet">
 <!-- ?v= is bumped on every release so phones never run a stale cached copy -->
-<link rel="stylesheet" href="styles.css?v=9">
+<link rel="stylesheet" href="styles.css?v=11">
 </head>
 <body>
 <div id="frame">
@@ -52,10 +52,7 @@
   <div id="app" class="screen hidden">
     <header id="appbar">
       <img class="brand-logo" src="assets/hkm-marwar-logo.png" alt="Hare Krishna Marwad Mandir">
-      <div class="role-toggle hidden" id="role-toggle">
-        <button type="button" data-role="devotee">Devotee</button>
-        <button type="button" data-role="admin">Admin</button>
-      </div>
+      <span class="role-badge hidden" id="role-badge">Admin</span>
     </header>
     <main id="content"></main>
     <nav id="tabbar"></nav>
@@ -73,8 +70,8 @@
 
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=9"></script>
-<script src="store.js?v=9"></script>
-<script src="app.js?v=9"></script>
+<script src="config.js?v=11"></script>
+<script src="store.js?v=11"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>
