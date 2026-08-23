@@ -26,6 +26,10 @@
 
   const LS_KEY = 'japaSeva.v1';
 
+  // The single admin address. The real rule lives in the database
+  // (admin_email() in supabase/schema.sql); this mirrors it for demo mode.
+  const ADMIN_EMAIL = 'dineshbunkar533@gmail.com';
+
   const OTHERS = [
     { name: 'Rahul Vyas',     id: 'HKMM014', phone: '+91 98280 11402', rounds: 60, time: '17:31' },
     { name: 'Amit Purohit',   id: 'HKMM008', phone: '+91 98290 55317', rounds: 48, time: '19:05' },
@@ -76,8 +80,7 @@
       s = {
         user: null,
         events: seedEvents(),
-        mySubmissions: { e3: { rounds: 32, time: '18:12' }, e5: { rounds: 24, time: '19:40' }, e0: { rounds: 48, time: '17:05' } },
-        adminOverrides: {}
+        mySubmissions: { e3: { rounds: 32, time: '18:12' }, e5: { rounds: 24, time: '19:40' }, e0: { rounds: 48, time: '17:05' } }
       };
     }
     // Normalise states saved by older versions, and repair anything
@@ -85,7 +88,6 @@
     if (!s || typeof s !== 'object') s = {};
     if (!Array.isArray(s.events) || s.events.length === 0) s.events = seedEvents();
     if (!s.mySubmissions || typeof s.mySubmissions !== 'object') s.mySubmissions = {};
-    s.adminOverrides = s.adminOverrides || {};
     // Upgrade states saved under the older date-only model.
     (s.events || []).forEach(e => {
       if (!e.start_at) e.start_at = new Date((e.event_date || new Date().toISOString().slice(0, 10)) + 'T00:00').toISOString();
@@ -97,23 +99,22 @@
     const save = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch (e) {} };
     const now = () => new Date().toTimeString().slice(0, 5);
     const ev = id => s.events.find(e => e.id === id);
-    const isAdminId = id => id === 'HKMM001'
-      ? (s.adminOverrides[id] !== undefined ? s.adminOverrides[id] : true)
-      : !!s.adminOverrides[id];
+    // Mirrors the backend rule: exactly one address is the admin.
+    const isAdminEmail = email => String(email || '').toLowerCase() === ADMIN_EMAIL;
 
     function people(eventId) {
       const list = OTHERS.map(o => ({
         userId: o.id, name: o.name, devoteeId: o.id, phone: o.phone,
         rounds: o.rounds, total: o.rounds, time: o.time,
-        me: false, isAdmin: isAdminId(o.id)
+        me: false, isAdmin: false
       }));
       if (s.user) {
         const sub = s.mySubmissions[eventId];
         const r = sub ? sub.rounds : 0;
         list.push({
           userId: s.user.devoteeId, name: s.user.name, devoteeId: s.user.devoteeId, phone: s.user.phone,
-          rounds: r, total: r, time: sub ? sub.time : '—',
-          me: true, isAdmin: isAdminId(s.user.devoteeId)
+          rounds: r, total: r, time: sub ? sub.time : '-',
+          me: true, isAdmin: isAdminEmail(s.user.email)
         });
       }
       return list.sort((a, b) => b.total - a.total);
@@ -124,7 +125,7 @@
       isDemo: true,
 
       async currentUser() {
-        if (s.user) s.user.isAdmin = isAdminId(s.user.devoteeId);
+        if (s.user) s.user.isAdmin = isAdminEmail(s.user.email);
         return s.user;
       },
 
@@ -133,7 +134,7 @@
           s.user = {
             name: email.split('@')[0].replace(/[._-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
             email, devoteeId: 'HKMM001', phone: '+91 98280 41172',
-            group: 'Jodhpur Youth Bhakti Vriksha', isAdmin: isAdminId('HKMM001')
+            group: 'Jodhpur Youth Bhakti Vriksha', isAdmin: isAdminEmail(email)
           };
         } else { s.user.email = email; }
         save();
@@ -143,7 +144,7 @@
       async signUp(email, _pass, name) {
         s.user = {
           name, email, devoteeId: 'HKMM001', phone: '+91 98280 41172',
-          group: 'Jodhpur Youth Bhakti Vriksha', isAdmin: isAdminId('HKMM001')
+          group: 'Jodhpur Youth Bhakti Vriksha', isAdmin: isAdminEmail(email)
         };
         save();
         return { user: await this.currentUser(), needsConfirmation: false };
@@ -219,16 +220,6 @@
         if (!e) return;
         if (status === 'active') s.events.forEach(x => { if (x.status === 'active' && x.id !== id) x.status = 'closed'; });
         e.status = status;
-        save();
-      },
-
-      async setAdmin(userId, makeAdmin) {
-        if (!makeAdmin) {
-          const remaining = people(null).filter(p => p.isAdmin && p.userId !== userId);
-          if (remaining.length === 0) throw new Error('At least one admin must remain');
-        }
-        s.adminOverrides[userId] = makeAdmin;
-        if (s.user && s.user.devoteeId === userId) s.user.isAdmin = makeAdmin;
         save();
       },
 
@@ -441,10 +432,6 @@
         if (error) throw new Error(adminMsg(error));
       },
 
-      async setAdmin(userId, makeAdmin) {
-        const { error } = await sb.rpc('set_admin', { p_target: userId, p_admin: makeAdmin });
-        if (error) throw new Error(error.message);
-      }
     };
 
     function toRow(d) {

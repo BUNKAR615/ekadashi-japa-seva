@@ -673,9 +673,6 @@
           <div class="nm">${esc(p.name)}${p.isAdmin ? ' <span class="admin-tag">admin</span>' : ''}</div>
           <div class="sb">${esc(p.devoteeId)} · ${esc(p.phone || '—')}</div>
         </div>
-        ${p.me ? '' : `<button type="button" class="btn-mini${p.isAdmin ? ' warn' : ''}"
-          data-action="toggle-admin" data-id="${esc(p.userId)}" data-make="${p.isAdmin ? '0' : '1'}"
-          data-name="${esc(p.name)}">${p.isAdmin ? 'Remove admin' : 'Make admin'}</button>`}
         <div class="cnt">
           <div class="n">${p.rounds}</div>
           <div class="st" style="color:${p.rounds > 0 ? '#2F7D45' : '#B3ACA1'}">${p.rounds > 0 ? 'Submitted' : 'Pending'}</div>
@@ -683,24 +680,13 @@
       </div>`).join('');
     return `<div class="list-meta"><span>${people.length} devotee${people.length === 1 ? '' : 's'}</span><span>Sorted by rounds</span></div>
       <div class="list-card">${rows}</div>
+      <p class="board-note" style="text-align:left;padding:0 4px">Admin access is fixed to one temple account and cannot be granted from here.</p>
       ${people.length === 0 ? `<p class="empty-note">${ui.query ? `No devotee matches “${esc(ui.query)}”.` : 'No devotees yet.'}</p>` : ''}`;
   }
 
   function renderDevoteeList() {
     const wrap = $('#devotee-list-wrap');
     if (wrap) wrap.innerHTML = devoteeListHtml();
-  }
-
-  async function toggleAdmin(userId, makeAdmin, name) {
-    try {
-      await store.setAdmin(userId, makeAdmin);
-      if (data.user && (userId === data.user.id || userId === data.user.devoteeId)) {
-        data.user.isAdmin = makeAdmin;
-      }
-      data.devotees = await store.devotees(data.event ? data.event.id : null);
-      render();
-      toast(makeAdmin ? `${name} is now a temple admin.` : `Admin rights removed from ${name}.`);
-    } catch (e) { showError(e.message); }
   }
 
   /* ---------- Rounds sheet ---------- */
@@ -989,9 +975,6 @@
       case 'activate-event':    await setEventStatus(t.dataset.id, 'active'); break;
       case 'reopen-event':      await setEventStatus(t.dataset.id, 'active'); break;
       case 'export-csv':        await exportCsv(); break;
-      case 'toggle-admin':
-        await toggleAdmin(t.dataset.id, t.dataset.make === '1', t.dataset.name);
-        break;
     }
   });
 

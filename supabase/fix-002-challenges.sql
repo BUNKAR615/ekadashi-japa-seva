@@ -12,7 +12,8 @@
 --   2. Rounds only accepted while the window is genuinely open —
 --      enforced in the database, not just the interface.
 --   3. Leaderboard controls: visibility including a full "off".
---   4. Admin role management, with at least one admin always kept.
+--   4. Admin pinned to exactly one email address; everyone else is
+--      an ordinary user and cannot be promoted.
 -- ============================================================
 
 -- ---------- 1. Challenges get a real start/end timestamp ----------
@@ -136,23 +137,82 @@ create policy submissions_read on public.submissions
     )
   );
 
--- ---------- 5. Admin role management ----------
-create or replace function public.set_admin(p_target uuid, p_admin boolean)
-returns void
+-- ============================================================
+--  6. ADMIN IS PINNED TO ONE EMAIL
+--
+--  Exactly one account is a temple admin: the address returned by
+--  admin_email() below. Everyone else is an ordinary user, always.
+--
+--  This is enforced by a trigger that RE-DERIVES is_admin from the
+--  account's email on every insert and update. It cannot be bypassed
+--  by the app, by a bug, by row level security, or by a stray SQL
+--  update — the flag is simply recomputed and any other value is
+--  discarded.
+--
+--  To hand the role to someone else later, change the address inside
+--  admin_email() and re-run that one function; every profile is
+--  corrected the next time it is touched, or immediately by running
+--  the reconcile statement at the end of this section.
+-- ============================================================
+
+create or replace function public.admin_email()
+returns text
+language sql
+immutable
+as $$ select 'dineshbunkar533@gmail.com'::text $$;
+
+create or replace function public.enforce_admin_email()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_email text;
+begin
+  select u.email into v_email from auth.users u where u.id = new.id;
+  new.is_admin := (lower(coalesce(v_email, '')) = lower(public.admin_email()));
+  return new;
+end;
+$$;
+
+-- The older guard is superseded: this trigger is strictly stronger.
+drop trigger if exists profiles_guard_admin on public.profiles;
+drop function if exists public.guard_profile_admin_flag();
+
+drop trigger if exists profiles_enforce_admin on public.profiles;
+create trigger profiles_enforce_admin
+  before insert or update on public.profiles
+  for each row execute function public.enforce_admin_email();
+
+-- New signups: create the profile, admin status is derived by the
+-- trigger above. No "first devotee becomes admin" bootstrap.
+create or replace function public.handle_new_user()
+returns trigger
 language plpgsql
 security definer
 set search_path = public
 as $$
 begin
-  if not public.is_admin() then
-    raise exception 'Only temple admins can manage admin roles';
-  end if;
-  if not p_admin then
-    if not exists (select 1 from public.profiles where is_admin and id <> p_target) then
-      raise exception 'At least one admin must remain';
-    end if;
-  end if;
-  update public.profiles set is_admin = p_admin where id = p_target;
+  insert into public.profiles (id, name, devotee_id, phone)
+  values (
+    new.id,
+    coalesce(nullif(new.raw_user_meta_data ->> 'name', ''), split_part(new.email, '@', 1)),
+    'HKMM' || lpad(nextval('public.devotee_seq')::text, 3, '0'),
+    nullif(new.raw_user_meta_data ->> 'phone', '')
+  )
+  on conflict (id) do nothing;
+  return new;
 end;
 $$;
-grant execute on function public.set_admin(uuid, boolean) to authenticated;
+
+-- Nobody can grant or revoke admin from inside the app.
+drop function if exists public.set_admin(uuid, boolean);
+
+-- Reconcile every existing profile with the rule right now.
+update public.profiles p
+set is_admin = (
+  lower(coalesce((select u.email from auth.users u where u.id = p.id), '')) = lower(public.admin_email())
+);
+
+grant execute on function public.admin_email() to authenticated;

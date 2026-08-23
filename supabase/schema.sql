@@ -71,26 +71,21 @@ as $$
 $$;
 
 -- ---------- New signups get a profile automatically ----------
+-- Admin status is not set here; it is derived from the account's email
+-- by the enforce_admin_email trigger further down.
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
 security definer
 set search_path = public
 as $$
-declare
-  v_first boolean;
 begin
-  -- The first devotee to register becomes the temple admin; everyone
-  -- after that is an ordinary devotee.
-  select not exists (select 1 from public.profiles) into v_first;
-
-  insert into public.profiles (id, name, devotee_id, phone, is_admin)
+  insert into public.profiles (id, name, devotee_id, phone)
   values (
     new.id,
     coalesce(nullif(new.raw_user_meta_data ->> 'name', ''), split_part(new.email, '@', 1)),
     'HKMM' || lpad(nextval('public.devotee_seq')::text, 3, '0'),
-    nullif(new.raw_user_meta_data ->> 'phone', ''),
-    v_first
+    nullif(new.raw_user_meta_data ->> 'phone', '')
   )
   on conflict (id) do nothing;
   return new;
@@ -140,26 +135,38 @@ as $$
   order by p.devotee_id;
 $$;
 
--- ---------- Admin role management ----------
--- Promote or demote a devotee. Guarded so at least one admin remains.
-create or replace function public.set_admin(p_target uuid, p_admin boolean)
-returns void
+-- ---------- Admin is pinned to one email ----------
+-- Exactly one account is a temple admin: the address returned by
+-- admin_email(). Everyone else is an ordinary user, always. A trigger
+-- re-derives is_admin from the account's email on every insert and
+-- update, so the flag cannot drift — not from the app, not from RLS,
+-- not from a stray SQL update. To hand the role over, change the
+-- address inside admin_email().
+create or replace function public.admin_email()
+returns text
+language sql
+immutable
+as $$ select 'dineshbunkar533@gmail.com'::text $$;
+
+create or replace function public.enforce_admin_email()
+returns trigger
 language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_email text;
 begin
-  if not public.is_admin() then
-    raise exception 'Only temple admins can manage admin roles';
-  end if;
-  if not p_admin then
-    if not exists (select 1 from public.profiles where is_admin and id <> p_target) then
-      raise exception 'At least one admin must remain';
-    end if;
-  end if;
-  update public.profiles set is_admin = p_admin where id = p_target;
+  select u.email into v_email from auth.users u where u.id = new.id;
+  new.is_admin := (lower(coalesce(v_email, '')) = lower(public.admin_email()));
+  return new;
 end;
 $$;
+
+drop trigger if exists profiles_enforce_admin on public.profiles;
+create trigger profiles_enforce_admin
+  before insert or update on public.profiles
+  for each row execute function public.enforce_admin_email();
 
 -- ---------- Row Level Security ----------
 
@@ -263,31 +270,10 @@ grant select (id, name, devotee_id, group_name, is_admin, created_at)
   on public.profiles to authenticated;
 grant update (name, phone, group_name) on public.profiles to authenticated;
 
--- Defence in depth: refuse any change to is_admin unless the caller is
--- already an admin, even if the grants above are loosened later.
-create or replace function public.guard_profile_admin_flag()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  if new.is_admin is distinct from old.is_admin and not public.is_admin() then
-    raise exception 'Only temple admins can change admin status';
-  end if;
-  return new;
-end;
-$$;
-
-drop trigger if exists profiles_guard_admin on public.profiles;
-create trigger profiles_guard_admin
-  before update on public.profiles
-  for each row execute function public.guard_profile_admin_flag();
-
 grant execute on function public.event_totals(uuid) to authenticated;
 grant execute on function public.admin_devotees() to authenticated;
 grant execute on function public.is_admin() to authenticated;
-grant execute on function public.set_admin(uuid, boolean) to authenticated;
+grant execute on function public.admin_email() to authenticated;
 
 -- ---------- Seed: a first event ----------
 insert into public.events (name, start_at, end_at, status, goal_rounds, visibility, description)
@@ -299,7 +285,9 @@ select 'Ekadashi Japa Seva',
 where not exists (select 1 from public.events);
 
 -- ============================================================
---  The first devotee to sign up becomes the temple admin
---  automatically. Admins can promote or demote others from the
---  Devotees tab inside the app.
+--  Admin access belongs to exactly one address, set in
+--  admin_email() above. That account is a full participant too:
+--  it records rounds and appears on the leaderboard like everyone
+--  else, and additionally sees the Admin tab. Every other account
+--  is an ordinary user and cannot be promoted from inside the app.
 -- ============================================================

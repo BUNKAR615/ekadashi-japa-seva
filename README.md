@@ -43,16 +43,10 @@ Both come from **Project Settings**: the URL is under *Data API*, the key is the
 safe to commit. **Never** put the `service_role` key here — it bypasses all
 security.
 
-**4. Make yourself an admin.** The first devotee to register becomes the temple
-admin automatically, so simply sign up first. To promote someone later, run this
-in the SQL Editor:
-
-```sql
-update public.profiles set is_admin = true
-where id = (select id from auth.users where email = 'them@example.com');
-```
-
-The **Admin** toggle appears in the header only for admin accounts.
+**4. Admin access.** Exactly one address is the admin, set in `admin_email()`
+inside the schema. Signing up with that address grants the Admin tab
+automatically; every other account is an ordinary user. To change who it is,
+edit that one function and re-run it.
 
 **5. Bump the cache version.** After changing `config.js`, edit `index.html` and
 raise the `?v=` number by one on the script and stylesheet tags, so phones pick up the
@@ -126,8 +120,13 @@ anyone else, and the Admin tab adds Overview / Challenges / Devotees.
 - **Leaderboard controls** — per-challenge visibility: names, devotee IDs,
   admin-only, or fully off. One challenge runs at a time, and the Leaderboard
   tab always shows that challenge, ranked by total rounds.
-- **Admin roles** — promote or demote any devotee from the Devotees tab.
-  The database guarantees at least one admin always remains.
+- **Admin access is fixed to one address.** A database trigger re-derives
+  is_admin from the account email on every write, so exactly one account is
+  an admin and nobody can be promoted — not from the app, not by a bug, not
+  by a stray SQL update. That account is a full participant too: it records
+  rounds and appears on the leaderboard like everyone else, and additionally
+  sees the Admin tab. To hand the role over, change the address inside
+  admin_email() in the schema.
 - **Overview** — participation, top offerings, CSV export.
 - **Devotees** — searchable directory with phone numbers and status.
 
