@@ -23,9 +23,13 @@
   let store = null;
 
   const data = {
-    user: null, events: [], event: null, mine: 0,
+    user: null, events: [],
+    event: null,                 // the challenge you submit rounds to (active, else last closed)
+    boardEvent: null,            // the challenge whose leaderboard is displayed (admin's choice)
+    mine: 0,
     totals: { total: 0, participants: 0, average: 0, highest: 0, capacity: 0 },
-    leaders: [], devotees: [], history: []
+    boardTotals: { total: 0, participants: 0, average: 0, highest: 0, capacity: 0 },
+    leaders: [], activeLeaders: [], devotees: [], history: []
   };
 
   const ui = {
@@ -52,36 +56,66 @@
     const d = new Date(iso + 'T00:00:00');
     return isNaN(d) ? iso : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
   }
+  const isMultiDay = e => e && e.end_date && e.end_date !== e.event_date;
+  const dateRange = e => isMultiDay(e)
+    ? `${fmtDateShort(e.event_date)} – ${fmtDateShort(e.end_date)}`
+    : fmtDateShort(e.event_date);
 
   const activeEvent  = () => data.events.find(e => e.status === 'active');
   const nextUpcoming = () => data.events.filter(e => e.status === 'upcoming')
     .sort((a, b) => a.event_date.localeCompare(b.event_date))[0];
   const lastClosed   = () => data.events.filter(e => e.status === 'closed')
     .sort((a, b) => b.event_date.localeCompare(a.event_date))[0];
-  const displayEvent = () => activeEvent() || lastClosed() || null;
 
   const isAdmin = () => !!(data.user && data.user.isAdmin);
+
+  // Sort board rows by the challenge's ranking parameter.
+  function rankSorted(rows, ev) {
+    const daily = ev && ev.rank_by === 'daily';
+    const metric = daily ? (p => p.today) : (p => p.total);
+    return rows.slice().sort((a, b) => (metric(b) - metric(a)) || (b.total - a.total));
+  }
 
   /* ---------- Loading ---------- */
 
   async function refresh() {
     data.events = await store.listEvents();
-    data.event = displayEvent();
-    const ev = data.event;
+    const ev = activeEvent() || lastClosed() || null;
+    data.event = ev;
+
+    // The displayed leaderboard: the admin's featured challenge, else the
+    // same challenge devotees are submitting to.
+    const be = data.events.find(e => e.featured) || ev;
+    data.boardEvent = be;
 
     if (ev) {
-      const [mine, totals, leaders] = await Promise.all([
+      const [mine, totals] = await Promise.all([
         store.myRounds(ev.id),
-        store.eventTotals(ev.id),
-        ev.visibility === 'admin' && !isAdmin() ? Promise.resolve([]) : store.leaderboard(ev.id)
+        store.eventTotals(ev.id)
       ]);
       data.mine = mine;
       data.totals = totals;
-      data.leaders = leaders;
     } else {
       data.mine = 0;
       data.totals = { total: 0, participants: 0, average: 0, highest: 0, capacity: 0 };
+    }
+
+    if (be) {
+      data.boardTotals = (ev && be.id === ev.id) ? data.totals : await store.eventTotals(be.id);
+      const hidden = be.visibility === 'off' || (be.visibility === 'admin' && !isAdmin());
+      data.leaders = hidden ? [] : await store.leaderboard(be.id);
+    } else {
+      data.boardTotals = { total: 0, participants: 0, average: 0, highest: 0, capacity: 0 };
       data.leaders = [];
+    }
+
+    // Admin overview always ranks the live challenge, whatever is featured.
+    if (isAdmin() && ev) {
+      data.activeLeaders = (be && be.id === ev.id && data.leaders.length)
+        ? data.leaders
+        : await store.leaderboard(ev.id);
+    } else {
+      data.activeLeaders = [];
     }
 
     data.history = await store.myHistory();
@@ -275,10 +309,10 @@
       const next = nextUpcoming();
       return `<div class="pad">
         <div class="card no-event-card">
-          <p class="big">No active Japa event</p>
+          <p class="big">No active Japa challenge</p>
           <p class="small">${next
-            ? `The next Ekadashi is ${esc(fmtDateLong(next.event_date))}. Your rounds can be offered then.`
-            : 'A new Japa event will be announced soon.'}</p>
+            ? `The next challenge begins ${esc(fmtDateLong(next.event_date))}. Your rounds can be offered then.`
+            : 'A new Japa challenge will be announced soon.'}</p>
         </div>
         ${quoteCard()}${mantraBlock()}
       </div>`;
@@ -288,11 +322,12 @@
     const rounds = data.mine;
     const t = data.totals;
     const pct = ev.goal_rounds ? Math.min(100, Math.round((t.total / ev.goal_rounds) * 100)) : 0;
+    const eyebrow = isMultiDay(ev) ? dateRange(ev) : `Ekadashi · ${fmtDateShort(ev.event_date)}`;
 
     return `<div class="pad">
       <div class="card event-card">
         <div class="event-top">
-          <span class="eyebrow">Ekadashi · ${esc(fmtDateShort(ev.event_date))}</span>
+          <span class="eyebrow">${esc(eyebrow)}</span>
           <span class="chip ${closed ? 'closed' : 'active'}">${closed ? 'Closed' : 'Active'}</span>
         </div>
         <h2 class="event-title">${esc(ev.name)}</h2>
@@ -302,16 +337,16 @@
           ? 'Not recorded yet'
           : `${fmt(rounds * NAMES_PER_ROUND)} holy names`}</div>
         <button type="button" class="cta ${closed ? 'dead' : 'live'}" data-action="open-sheet">
-          ${closed ? 'Event closed' : (rounds === 0 ? 'Record my rounds' : 'Update Rounds')}
+          ${closed ? 'Challenge closed' : (rounds === 0 ? 'Record my rounds' : 'Update Rounds')}
         </button>
         <div class="cta-hint">${closed
           ? 'Results stay in your Journey'
-          : `You can change this any time until ${esc(ev.ends_at)}`}</div>
+          : `You can change this any time until ${esc(ev.ends_at)}${isMultiDay(ev) ? ' · rounds are counted each day' : ''}`}</div>
       </div>
 
       <div class="card together-card">
         <div class="together-top">
-          <span class="eyebrow">Together today</span>
+          <span class="eyebrow">Together${isMultiDay(ev) ? '' : ' today'}</span>
           <a href="#" data-action="goto-together">See all</a>
         </div>
         <div class="group-row">
@@ -322,7 +357,7 @@
           ? `${fmt(t.capacity)} devotees registered · ${fmt(t.participants)} have submitted`
           : `${fmt(t.participants)} devotees have submitted`}</div>
         <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
-        <div class="progress-meta"><span>${pct}% of today’s goal</span><span>${fmt(ev.goal_rounds)} goal</span></div>
+        <div class="progress-meta"><span>${pct}% of the goal</span><span>${fmt(ev.goal_rounds)} goal</span></div>
       </div>
 
       ${quoteCard()}${mantraBlock()}
@@ -349,51 +384,64 @@
   /* ----- Together ----- */
 
   function viewTogether() {
-    const ev = data.event;
+    const ev = data.boardEvent;
     if (!ev) {
       return `<div class="pad-lg">
         <h2 class="h2">Together</h2>
-        <p class="sub">No event yet — the group offering will appear here.</p>
+        <p class="sub">No challenge yet — the group offering will appear here.</p>
       </div>`;
     }
-    const t = data.totals;
-    const people = data.leaders;
-    const hidden = ev.visibility === 'admin' && !isAdmin();
+    const t = data.boardTotals;
+    const daily = ev.rank_by === 'daily';
+    const people = rankSorted(data.leaders, ev);
+    const off = ev.visibility === 'off';
+    const privated = ev.visibility === 'admin' && !isAdmin();
 
     const stats = [
       { label: 'Total rounds', value: fmt(t.total) },
       { label: 'Participants', value: fmt(t.participants) },
       { label: 'Average', value: String(t.average) },
-      { label: 'Highest', value: String(t.highest) }
+      { label: 'Highest', value: fmt(t.highest) }
     ];
 
-    const board = hidden
-      ? `<div class="private-card">
-          <p class="big">Individual rounds are private for this event</p>
-          <p class="small">Only temple admins can see each devotee’s submission. The totals above are everyone’s offering together.</p>
-        </div>`
-      : (people.length
-        ? `<div class="list-card">
-            ${people.map((p, i) => `
-              <div class="board-row${p.me ? ' me' : ''}">
-                <div class="rank">${i + 1}</div>
-                <div class="who">
-                  <div class="nm">${esc(ev.visibility === 'ids' ? p.devoteeId : p.name)}</div>
-                  <div class="sb">${ev.visibility === 'ids'
-                    ? (p.me ? 'You' : 'Devotee')
-                    : (p.me ? 'You · ' + esc(p.devoteeId) : esc(p.devoteeId))}</div>
-                </div>
-                <div class="cnt">${p.rounds}</div>
-              </div>`).join('')}
-          </div>
-          <p class="board-note">Not a competition — a shared offering. ${
-            ev.visibility === 'ids' ? 'Shown by Devotee ID for this event.' : 'Shown by name for this event.'}</p>`
-        : `<div class="private-card"><p class="big">No rounds recorded yet</p>
-             <p class="small">Be the first to offer your chanting today.</p></div>`);
+    let board;
+    if (off) {
+      board = `<div class="private-card">
+        <p class="big">The leaderboard is turned off</p>
+        <p class="small">The temple has disabled the leaderboard for this challenge. The totals above are everyone’s offering together.</p>
+      </div>`;
+    } else if (privated) {
+      board = `<div class="private-card">
+        <p class="big">Individual rounds are private for this challenge</p>
+        <p class="small">Only temple admins can see each devotee’s submission. The totals above are everyone’s offering together.</p>
+      </div>`;
+    } else if (people.length === 0) {
+      board = `<div class="private-card">
+        <p class="big">No rounds recorded yet</p>
+        <p class="small">Be the first to offer your chanting.</p></div>`;
+    } else {
+      board = `<div class="list-card">
+        ${people.map((p, i) => `
+          <div class="board-row${p.me ? ' me' : ''}">
+            <div class="rank">${i + 1}</div>
+            <div class="who">
+              <div class="nm">${esc(ev.visibility === 'ids' ? p.devoteeId : p.name)}</div>
+              <div class="sb">${ev.visibility === 'ids'
+                ? (p.me ? 'You' : 'Devotee')
+                : (p.me ? 'You · ' + esc(p.devoteeId) : esc(p.devoteeId))}${
+                daily ? ' · ' + fmt(p.total) + ' total' : ''}</div>
+            </div>
+            <div class="cnt">${daily ? p.today : p.total}</div>
+          </div>`).join('')}
+      </div>
+      <p class="board-note">Not a competition — a shared offering.<br>${
+        daily ? 'Ranked by today’s progress.' :
+        ev.visibility === 'ids' ? 'Shown by Devotee ID for this challenge.' : 'Ranked by total rounds.'}</p>`;
+    }
 
     return `<div class="pad-lg">
       <h2 class="h2">Together</h2>
-      <p class="sub">${esc(ev.name)} · ${esc(fmtDateLong(ev.event_date))}</p>
+      <p class="sub">${esc(ev.name)} · ${esc(dateRange(ev))}</p>
       <div class="stat-grid">
         ${stats.map(s => `<div class="stat-tile"><div class="lbl">${s.label}</div><div class="val">${s.value}</div></div>`).join('')}
       </div>
@@ -410,10 +458,10 @@
 
     return `<div class="pad-lg">
       <h2 class="h2">Journey</h2>
-      <p class="sub">${fmt(total)} rounds across ${items.length} event${items.length === 1 ? '' : 's'} with the temple</p>
+      <p class="sub">${fmt(total)} rounds across ${items.length} challenge${items.length === 1 ? '' : 's'} with the temple</p>
       ${items.length === 0
         ? `<div class="private-card"><p class="big">Nothing recorded yet</p>
-             <p class="small">Once you offer rounds, each event will appear here.</p></div>`
+             <p class="small">Once you offer rounds, each challenge will appear here.</p></div>`
         : `<div class="list-card">
             ${items.map(h => {
               const isToday = active && h.eventId === active.id;
@@ -421,7 +469,7 @@
                 <div class="who">
                   <div class="tl-date">${esc(fmtDateShort(h.date))}</div>
                   <div class="tl-title">${esc(h.name)}</div>
-                  <div class="tl-note">${isToday ? 'Today · updated at ' + esc(h.time) : 'Recorded at ' + esc(h.time)}</div>
+                  <div class="tl-note">${isToday ? 'In progress · updated at ' + esc(h.time) : 'Recorded at ' + esc(h.time)}</div>
                 </div>
                 <div style="flex:none">
                   <div class="tl-rounds">${h.rounds}</div>
@@ -451,7 +499,7 @@
         <div class="profile-id">${esc(u.devoteeId || '')}</div>
         <div class="profile-stats">
           <div class="profile-stat"><div class="n">${fmt(total)}</div><div class="l">Total rounds</div></div>
-          <div class="profile-stat"><div class="n">${data.history.length}</div><div class="l">Events joined</div></div>
+          <div class="profile-stat"><div class="n">${data.history.length}</div><div class="l">Challenges joined</div></div>
         </div>
       </div>
 
@@ -469,32 +517,36 @@
     </div>`;
   }
 
-  /* ----- Admin ----- */
+  /* ----- Admin: Overview ----- */
 
   function viewAdminOverview() {
     const ev = activeEvent();
     const t = data.totals;
     const pct = ev && t.capacity ? Math.round((t.participants / t.capacity) * 100) : 0;
-    const top = ev ? data.leaders.slice(0, 4) : [];
+    const top = ev ? rankSorted(data.activeLeaders, ev).slice(0, 4) : [];
+    const be = data.boardEvent;
+    const featured = data.events.find(e => e.featured);
 
     const stats = ev ? [
-      { label: 'Active event', value: 'Ekadashi', sub: `${fmtDateShort(ev.event_date)} · closes ${ev.ends_at}` },
+      { label: 'Live challenge', value: ev.name.split(' ')[0], sub: `${dateRange(ev)} · until ${ev.ends_at}` },
       { label: 'Total devotees', value: fmt(t.capacity), sub: 'registered' },
-      { label: 'Total rounds', value: fmt(t.total), sub: 'today' },
+      { label: 'Total rounds', value: fmt(t.total), sub: 'this challenge' },
       { label: 'Average rounds', value: String(t.average), sub: 'per participant' }
     ] : [
-      { label: 'Active event', value: '—', sub: 'none live' },
+      { label: 'Live challenge', value: '—', sub: 'none live' },
       { label: 'Total devotees', value: fmt(t.capacity), sub: 'registered' },
-      { label: 'Total rounds', value: '—', sub: 'no event' },
-      { label: 'Average rounds', value: '—', sub: 'no event' }
+      { label: 'Total rounds', value: '—', sub: 'no challenge' },
+      { label: 'Average rounds', value: '—', sub: 'no challenge' }
     ];
+
+    const selectable = data.events.filter(e => e.status !== 'draft');
 
     return `<div class="pad">
       <div class="card admin-head">
         <h2>Admin</h2>
         <div class="live-line">
           <span class="live-dot${ev ? '' : ' off'}"></span>
-          ${ev ? `${esc(ev.name)} · live until ${esc(ev.ends_at)}` : 'No event is live right now'}
+          ${ev ? `${esc(ev.name)} · live until ${esc(ev.ends_at)}` : 'No challenge is live right now'}
         </div>
       </div>
 
@@ -506,41 +558,62 @@
         <span class="eyebrow">Participation</span>
         <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
         <div class="panel-meta">
-          <span>${ev ? `${fmt(t.participants)} of ${fmt(t.capacity)} devotees have submitted` : 'Waiting for the next event'}</span>
+          <span>${ev ? `${fmt(t.participants)} of ${fmt(t.capacity)} devotees have submitted` : 'Waiting for the next challenge'}</span>
           <span>${ev ? pct + '%' : ''}</span>
         </div>
         <div class="btn-row">
-          <button type="button" class="btn-fill" data-action="new-event">New Event</button>
+          <button type="button" class="btn-fill" data-action="new-event">New Challenge</button>
           <button type="button" class="btn-line" data-action="export-csv">Export CSV</button>
         </div>
       </div>
 
+      <div class="panel">
+        <span class="eyebrow">Leaderboard shown to devotees</span>
+        <select id="featured-select" class="field" style="margin-bottom:0;height:46px">
+          <option value=""${featured ? '' : ' selected'}>Automatic — the live challenge</option>
+          ${selectable.map(e => `<option value="${e.id}"${featured && featured.id === e.id ? ' selected' : ''}>${esc(e.name)} · ${esc(dateRange(e))}</option>`).join('')}
+        </select>
+        <div class="panel-meta">
+          <span>${be
+            ? `Now showing: ${esc(be.name)} · ${be.visibility === 'off' ? 'leaderboard off' :
+                be.visibility === 'admin' ? 'admins only' :
+                be.visibility === 'ids' ? 'devotee IDs' : 'names'} · ranked by ${be.rank_by === 'daily' ? 'daily progress' : 'total rounds'}`
+            : 'Nothing to display yet'}</span>
+        </div>
+      </div>
+
       ${top.length ? `<div class="list-card">
-        <div class="top-hd">Top offerings today</div>
+        <div class="top-hd">Top offerings</div>
         ${top.map((p, i) => `
           <div class="top-row">
             <div class="rk">${i + 1}</div>
             <div class="who"><div class="nm">${esc(p.name)}</div><div class="sb">${esc(p.devoteeId)} · ${esc(p.time)}</div></div>
-            <div class="n">${p.rounds}</div>
+            <div class="n">${ev.rank_by === 'daily' ? p.today : p.total}</div>
           </div>`).join('')}
       </div>` : ''}
     </div>`;
   }
 
+  /* ----- Admin: Events ----- */
+
   function eventMeta(e) {
+    const vis = e.visibility === 'names' ? 'names visible'
+      : e.visibility === 'ids' ? 'devotee IDs'
+      : e.visibility === 'admin' ? 'admin only' : 'leaderboard off';
+    const rank = e.rank_by === 'daily' ? 'daily progress' : 'total rounds';
     switch (e.status) {
-      case 'active':   return `Live now · ${e.starts_at}–${e.ends_at}`;
-      case 'upcoming': return `Leaderboard: ${e.visibility === 'names' ? 'names visible' : e.visibility === 'ids' ? 'devotee IDs' : 'admin only'}`;
+      case 'active':   return `Live now · ${e.starts_at}–${e.ends_at} · ${vis}`;
+      case 'upcoming': return `Leaderboard: ${vis} · ranked by ${rank}`;
       case 'closed':   return `Closed · goal was ${fmt(e.goal_rounds)} rounds`;
-      default:         return 'Not published yet';
+      default:         return 'Draft — not visible to devotees yet';
     }
   }
   function eventPrimary(e) {
     switch (e.status) {
-      case 'active':   return { label: 'Close event', action: 'close-event' };
-      case 'upcoming': return { label: 'Activate', action: 'activate-event' };
+      case 'active':   return { label: 'Close', action: 'close-event' };
+      case 'upcoming': return { label: 'Start now', action: 'activate-event' };
       case 'closed':   return { label: 'Reopen', action: 'reopen-event' };
-      default:         return { label: 'Publish', action: 'activate-event' };
+      default:         return { label: 'Start now', action: 'activate-event' };
     }
   }
 
@@ -550,17 +623,17 @@
       (order[a.status] - order[b.status]) || b.event_date.localeCompare(a.event_date));
     return `<div class="pad-lg">
       <div class="admin-header-row">
-        <h2 class="h2" style="margin:0">Events</h2>
+        <h2 class="h2" style="margin:0">Challenges</h2>
         <button type="button" class="btn-new" data-action="new-event">+ New</button>
       </div>
       ${events.map(e => {
         const p = eventPrimary(e);
         return `<div class="event-item">
           <div class="top">
-            <span class="dt">${esc(fmtDateShort(e.event_date))}</span>
+            <span class="dt">${esc(dateRange(e))}</span>
             <span class="chip ${e.status}">${e.status.charAt(0).toUpperCase() + e.status.slice(1)}</span>
           </div>
-          <div class="nm">${esc(e.name)}</div>
+          <div class="nm">${esc(e.name)}${e.featured ? ' <span class="admin-tag">on board</span>' : ''}</div>
           <div class="meta">${esc(eventMeta(e))}</div>
           <div class="event-actions">
             <button type="button" data-action="${p.action}" data-id="${e.id}">${p.label}</button>
@@ -570,6 +643,8 @@
       }).join('')}
     </div>`;
   }
+
+  /* ----- Admin: Devotees ----- */
 
   function viewAdminDevotees() {
     return `<div class="pad-lg">
@@ -590,6 +665,9 @@
           <div class="nm">${esc(p.name)}${p.isAdmin ? ' <span class="admin-tag">admin</span>' : ''}</div>
           <div class="sb">${esc(p.devoteeId)} · ${esc(p.phone || '—')}</div>
         </div>
+        ${p.me ? '' : `<button type="button" class="btn-mini${p.isAdmin ? ' warn' : ''}"
+          data-action="toggle-admin" data-id="${esc(p.userId)}" data-make="${p.isAdmin ? '0' : '1'}"
+          data-name="${esc(p.name)}">${p.isAdmin ? 'Remove admin' : 'Make admin'}</button>`}
         <div class="cnt">
           <div class="n">${p.rounds}</div>
           <div class="st" style="color:${p.rounds > 0 ? '#2F7D45' : '#B3ACA1'}">${p.rounds > 0 ? 'Submitted' : 'Pending'}</div>
@@ -603,6 +681,18 @@
   function renderDevoteeList() {
     const wrap = $('#devotee-list-wrap');
     if (wrap) wrap.innerHTML = devoteeListHtml();
+  }
+
+  async function toggleAdmin(userId, makeAdmin, name) {
+    try {
+      await store.setAdmin(userId, makeAdmin);
+      if (data.user && (userId === data.user.id || userId === data.user.devoteeId)) {
+        data.user.isAdmin = makeAdmin;
+      }
+      data.devotees = await store.devotees(data.event ? data.event.id : null);
+      render();
+      toast(makeAdmin ? `${name} is now a temple admin.` : `Admin rights removed from ${name}.`);
+    } catch (e) { showError(e.message); }
   }
 
   /* ---------- Rounds sheet ---------- */
@@ -655,7 +745,7 @@
     }
   }
 
-  /* ---------- Event form ---------- */
+  /* ---------- Challenge form ---------- */
 
   function openEventForm(editId) {
     ui.sheet = 'event-form';
@@ -664,13 +754,18 @@
   }
 
   async function submitEventForm() {
+    const start = $('#ef-date').value || new Date().toLocaleDateString('en-CA');
+    let end = $('#ef-date2').value || start;
+    if (end < start) end = start;
     const payload = {
       name: $('#ef-name').value.trim() || 'Ekadashi Japa Seva',
-      event_date: $('#ef-date').value || new Date().toISOString().slice(0, 10),
+      event_date: start,
+      end_date: end,
       status: $('#ef-status').value,
       starts_at: $('#ef-start').value || '00:00',
       ends_at: $('#ef-end').value || '23:59',
       goal_rounds: Math.max(100, parseInt($('#ef-goal').value, 10) || 3000),
+      rank_by: $('#ef-rank').value,
       description: $('#ef-desc').value.trim(),
       visibility: $('.vis-option.on') ? $('.vis-option.on').dataset.vis : 'names'
     };
@@ -685,7 +780,7 @@
       ui.editEventId = null;
       closeOverlay();
       await reload();
-      toast(wasEdit ? 'Event updated.' : 'Japa event created.');
+      toast(wasEdit ? 'Challenge updated.' : 'Japa challenge created.');
     } catch (e) {
       btn.disabled = false;
       btn.textContent = label;
@@ -697,17 +792,17 @@
     try {
       await store.setEventStatus(id, status);
       await reload();
-      toast(status === 'active' ? 'Event is now live.'
-          : status === 'closed' ? 'Event closed. Hare Krishna!' : 'Event updated.');
+      toast(status === 'active' ? 'Challenge is now live.'
+          : status === 'closed' ? 'Challenge closed. Hare Krishna!' : 'Challenge updated.');
     } catch (e) { showError(e.message); }
   }
 
   async function exportCsv() {
     const ev = activeEvent() || lastClosed();
-    if (!ev) { toast('No event to export yet.'); return; }
+    if (!ev) { toast('No challenge to export yet.'); return; }
     try {
       const people = await store.devotees(ev.id);
-      const rows = [['Name', 'Devotee ID', 'Phone', 'Rounds', 'Holy names', 'Time']];
+      const rows = [['Name', 'Devotee ID', 'Phone', 'Rounds', 'Holy names', 'Last update']];
       people.forEach(p => rows.push([p.name, p.devoteeId, p.phone, p.rounds, p.rounds * NAMES_PER_ROUND, p.time]));
       const csv = rows.map(r => r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
       const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
@@ -757,40 +852,50 @@
       const edit = ui.editEventId ? data.events.find(x => x.id === ui.editEventId) : null;
       const e = edit || {
         name: 'Ekadashi Japa Seva',
-        event_date: '', status: 'upcoming', starts_at: '00:00', ends_at: '23:59',
-        goal_rounds: 3000, visibility: 'names', description: ''
+        event_date: '', end_date: '', status: 'upcoming', starts_at: '00:00', ends_at: '23:59',
+        goal_rounds: 3000, visibility: 'names', rank_by: 'total', description: ''
       };
       const visOpts = [
         { key: 'names', label: 'Public within group', desc: 'Everyone sees name + rounds' },
         { key: 'ids',   label: 'Anonymous leaderboard', desc: 'Everyone sees Devotee ID + rounds' },
-        { key: 'admin', label: 'Admin only', desc: 'Only admins see individual submissions' }
+        { key: 'admin', label: 'Admin only', desc: 'Only admins see individual submissions' },
+        { key: 'off',   label: 'Leaderboard off', desc: 'No leaderboard — group totals only' }
       ];
       const statuses = edit ? ['upcoming', 'active', 'draft', 'closed'] : ['upcoming', 'active', 'draft'];
       root.innerHTML = `<div class="overlay">
         <div class="scrim" data-action="close-overlay"></div>
         <div class="sheet">
           <div class="grabber"></div>
-          <h3>${edit ? 'Edit Japa Event' : 'New Japa Event'}</h3>
+          <h3>${edit ? 'Edit Japa Challenge' : 'New Japa Challenge'}</h3>
           <div class="form-col" style="margin-top:16px">
-            <div><label class="field-label" for="ef-name">Event name</label>
+            <div><label class="field-label" for="ef-name">Challenge name</label>
               <input class="field" id="ef-name" type="text" value="${esc(e.name)}"></div>
             <div class="form-row">
-              <div><label class="field-label" for="ef-date">Date</label>
+              <div><label class="field-label" for="ef-date">Start date</label>
                 <input class="field" id="ef-date" type="date" value="${esc(e.event_date)}"></div>
+              <div><label class="field-label" for="ef-date2">End date</label>
+                <input class="field" id="ef-date2" type="date" value="${esc(e.end_date || e.event_date)}"></div>
+            </div>
+            <div class="form-row">
               <div><label class="field-label" for="ef-status">Status</label>
                 <select class="field" id="ef-status">
                   ${statuses.map(s => `<option value="${s}"${e.status === s ? ' selected' : ''}>${s.charAt(0).toUpperCase() + s.slice(1)}</option>`).join('')}
                 </select></div>
+              <div><label class="field-label" for="ef-rank">Ranking</label>
+                <select class="field" id="ef-rank">
+                  <option value="total"${e.rank_by !== 'daily' ? ' selected' : ''}>Total rounds</option>
+                  <option value="daily"${e.rank_by === 'daily' ? ' selected' : ''}>Daily progress</option>
+                </select></div>
             </div>
             <div class="form-row">
-              <div><label class="field-label" for="ef-start">Starts</label>
+              <div><label class="field-label" for="ef-start">Opens (daily)</label>
                 <input class="field" id="ef-start" type="time" value="${esc(e.starts_at)}"></div>
-              <div><label class="field-label" for="ef-end">Ends</label>
+              <div><label class="field-label" for="ef-end">Closes (daily)</label>
                 <input class="field" id="ef-end" type="time" value="${esc(e.ends_at)}"></div>
             </div>
             <div><label class="field-label" for="ef-goal">Group goal (rounds)</label>
               <input class="field" id="ef-goal" type="number" min="100" step="100" value="${e.goal_rounds}"></div>
-            <div><label class="field-label" for="ef-desc">Description</label>
+            <div><label class="field-label" for="ef-desc">Description / rules</label>
               <textarea class="field" id="ef-desc">${esc(e.description || '')}</textarea></div>
             <div>
               <div class="field-label">Leaderboard visibility</div>
@@ -803,7 +908,7 @@
               </div>
             </div>
           </div>
-          <button type="button" class="btn-primary" data-action="submit-event-form">${edit ? 'Save Changes' : 'Create Event'}</button>
+          <button type="button" class="btn-primary" data-action="submit-event-form">${edit ? 'Save Changes' : 'Create Challenge'}</button>
           <button type="button" class="btn-cancel" data-action="close-overlay">Cancel</button>
         </div>
       </div>`;
@@ -878,6 +983,19 @@
       case 'activate-event':    await setEventStatus(t.dataset.id, 'active'); break;
       case 'reopen-event':      await setEventStatus(t.dataset.id, 'active'); break;
       case 'export-csv':        await exportCsv(); break;
+      case 'toggle-admin':
+        await toggleAdmin(t.dataset.id, t.dataset.make === '1', t.dataset.name);
+        break;
+    }
+  });
+
+  document.addEventListener('change', async ev => {
+    if (ev.target.id === 'featured-select') {
+      try {
+        await store.setFeatured(ev.target.value || null);
+        await reload();
+        toast('Displayed leaderboard updated.');
+      } catch (e) { showError(e.message); }
     }
   });
 

@@ -368,3 +368,14 @@ button{cursor:pointer}
 }
 .pulse-ring span{width:8px;height:8px;border-radius:50%;background:var(--saffron)}
 .loading-card p{margin:0;font-size:14px;color:var(--muted)}
+
+/* Admin: promote/demote button in the devotee list */
+.btn-mini{
+  height:30px;padding:0 10px;border:1px solid var(--line-3);border-radius:9px;
+  background:transparent;font-size:10.5px;font-weight:500;color:var(--ink);flex:none;
+}
+.btn-mini.warn{color:var(--danger);border-color:rgba(192,57,43,.3)}
+.btn-mini:active{background:var(--sunk)}
+
+/* Selects share the field look */
+select.field{appearance:auto;-webkit-appearance:auto}

@@ -2,6 +2,8 @@
 --  Ekadashi Japa Seva — Supabase schema
 --  Run this once in the Supabase SQL Editor (Database > SQL Editor).
 --  Safe to re-run: every statement is guarded.
+--  (Existing projects created before challenge management should run
+--   fix-002-challenges.sql instead of re-running this file.)
 -- ============================================================
 
 -- ---------- Devotee IDs (HKMM001, HKMM002, …) ----------
@@ -23,24 +25,31 @@ create table if not exists public.events (
   id          uuid primary key default gen_random_uuid(),
   name        text not null,
   event_date  date not null,
+  end_date    date,
   status      text not null default 'upcoming'
               check (status in ('draft', 'upcoming', 'active', 'closed')),
   starts_at   text not null default '00:00',
   ends_at     text not null default '23:59',
   goal_rounds integer not null default 3000 check (goal_rounds > 0),
   visibility  text not null default 'names'
-              check (visibility in ('names', 'ids', 'admin')),
+              check (visibility in ('names', 'ids', 'admin', 'off')),
+  rank_by     text not null default 'total'
+              check (rank_by in ('total', 'daily')),
+  featured    boolean not null default false,
   description text default '',
   created_at  timestamptz not null default now()
 );
 
+-- Rounds are recorded per devotee per day, so multi-day challenges
+-- accumulate and "daily progress" ranking is possible.
 create table if not exists public.submissions (
   id         uuid primary key default gen_random_uuid(),
   event_id   uuid not null references public.events on delete cascade,
   user_id    uuid not null references public.profiles on delete cascade,
   rounds     integer not null check (rounds >= 0 and rounds <= 216),
+  entry_date date not null default (now() at time zone 'Asia/Kolkata')::date,
   updated_at timestamptz not null default now(),
-  unique (event_id, user_id)
+  unique (event_id, user_id, entry_date)
 );
 
 create index if not exists submissions_event_idx on public.submissions (event_id);
@@ -49,6 +58,11 @@ create index if not exists events_status_idx     on public.events (status);
 -- Only one event may be live at a time.
 create unique index if not exists events_single_active_idx
   on public.events ((status)) where status = 'active';
+
+-- At most one featured event (the leaderboard devotees see; when none
+-- is set the app falls back to the live challenge).
+create unique index if not exists events_single_featured_idx
+  on public.events ((featured)) where featured;
 
 -- ---------- Helper: am I an admin? ----------
 -- SECURITY DEFINER so policies can call it without recursing into
@@ -97,22 +111,28 @@ create trigger on_auth_user_created
 
 -- ---------- Aggregates ----------
 -- SECURITY DEFINER so the group total stays correct even for events whose
--- individual rows are hidden ('admin' visibility). Returns only aggregates,
--- never a devotee's individual figure.
-create or replace function public.event_totals(p_event uuid)
-returns table (total bigint, participants bigint, average numeric, highest integer)
+-- individual rows are hidden ('admin' or 'off' visibility). Returns only
+-- aggregates, never a devotee's individual figure.
+drop function if exists public.event_totals(uuid);
+create function public.event_totals(p_event uuid)
+returns table (total bigint, participants bigint, average numeric, highest bigint)
 language sql
 security definer
 stable
 set search_path = public
 as $$
+  with per_user as (
+    select user_id, sum(rounds) as r
+    from public.submissions
+    where event_id = p_event and rounds > 0
+    group by user_id
+  )
   select
-    coalesce(sum(rounds), 0)::bigint,
+    coalesce(sum(r), 0)::bigint,
     count(*)::bigint,
-    coalesce(round(avg(rounds)::numeric, 1), 0),
-    coalesce(max(rounds), 0)
-  from public.submissions
-  where event_id = p_event and rounds > 0;
+    coalesce(round(avg(r), 1), 0),
+    coalesce(max(r), 0)::bigint
+  from per_user;
 $$;
 
 -- Admin-only devotee directory (includes phone numbers).
@@ -130,6 +150,45 @@ as $$
   from public.profiles p
   where public.is_admin()
   order by p.devotee_id;
+$$;
+
+-- ---------- Admin role management ----------
+-- Promote or demote a devotee. Guarded so at least one admin remains.
+create or replace function public.set_admin(p_target uuid, p_admin boolean)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Only temple admins can manage admin roles';
+  end if;
+  if not p_admin then
+    if not exists (select 1 from public.profiles where is_admin and id <> p_target) then
+      raise exception 'At least one admin must remain';
+    end if;
+  end if;
+  update public.profiles set is_admin = p_admin where id = p_target;
+end;
+$$;
+
+-- ---------- Featured-challenge setter ----------
+create or replace function public.set_featured_event(p_event uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception 'Only temple admins can choose the displayed leaderboard';
+  end if;
+  update public.events set featured = false where featured;
+  if p_event is not null then
+    update public.events set featured = true where id = p_event;
+  end if;
+end;
 $$;
 
 -- ---------- Row Level Security ----------
@@ -176,9 +235,9 @@ drop policy if exists submissions_insert_own on public.submissions;
 drop policy if exists submissions_update_own on public.submissions;
 drop policy if exists submissions_admin_all  on public.submissions;
 
--- This is what makes the "Admin only" privacy setting real: when an event is
--- set to 'admin' visibility, other devotees' rows are not merely hidden in the
--- interface, the database refuses to return them.
+-- This is what makes the leaderboard privacy settings real: for 'admin'
+-- and 'off' events, other devotees' rows are not merely hidden in the
+-- interface — the database refuses to return them.
 create policy submissions_read on public.submissions
   for select to authenticated
   using (
@@ -249,17 +308,17 @@ create trigger profiles_guard_admin
 grant execute on function public.event_totals(uuid) to authenticated;
 grant execute on function public.admin_devotees() to authenticated;
 grant execute on function public.is_admin() to authenticated;
+grant execute on function public.set_admin(uuid, boolean) to authenticated;
+grant execute on function public.set_featured_event(uuid) to authenticated;
 
 -- ---------- Seed: a first event ----------
-insert into public.events (name, event_date, status, goal_rounds, visibility, description)
-select 'Ekadashi Japa Seva', current_date, 'active', 3000, 'names',
+insert into public.events (name, event_date, end_date, status, goal_rounds, visibility, description)
+select 'Ekadashi Japa Seva', current_date, current_date, 'active', 3000, 'names',
        'Offer your chanting with devotion. Rounds can be updated until midnight.'
 where not exists (select 1 from public.events);
 
 -- ============================================================
---  AFTER RUNNING THIS: make yourself an admin.
---  Sign up in the app first, then run:
---
---    update public.profiles set is_admin = true
---    where id = (select id from auth.users where email = 'you@example.com');
+--  The first devotee to sign up becomes the temple admin
+--  automatically. Admins can promote or demote others from the
+--  Devotees tab inside the app.
 -- ============================================================

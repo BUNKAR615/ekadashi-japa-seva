@@ -25,7 +25,9 @@ the free tier is ample. Choose a region close to India (Mumbai / Singapore).
 
 **2. Run the schema.** In the dashboard open **SQL Editor**, paste the whole of
 [`supabase/schema.sql`](supabase/schema.sql), and run it. It creates the tables,
-the security policies, and one active event to start with.
+the security policies, and one active event to start with. (Projects created
+before challenge management existed run
+[`supabase/fix-002-challenges.sql`](supabase/fix-002-challenges.sql) instead.)
 
 **3. Paste your keys** into [`config.js`](config.js):
 
@@ -53,7 +55,7 @@ where id = (select id from auth.users where email = 'them@example.com');
 The **Admin** toggle appears in the header only for admin accounts.
 
 **5. Bump the cache version.** After changing `config.js`, edit `index.html` and
-raise `?v=6` to `?v=7` on the script and stylesheet tags, so phones pick up the
+raise `?v=7` to `?v=8` on the script and stylesheet tags, so phones pick up the
 new files instead of a cached copy.
 
 ### Email confirmation
@@ -77,7 +79,9 @@ so they hold even if someone edits the page in their browser:
   database refuses to return other devotees' rows for such an event. Group
   totals still work, because they come from an aggregate function that returns
   sums only — never an individual's figure.
-- Rounds are constrained to 0–216 in the schema, matching the keypad cap.
+- Rounds are constrained to 0–216 per day in the schema, matching the keypad.
+- Promoting or demoting admins happens through a guarded database function;
+  the last remaining admin can never be demoted.
 
 ## What's inside
 
@@ -94,14 +98,25 @@ so they hold even if someone edits the page in their browser:
 
 ## Features
 
-**Devotee** — Japa tab (today's seva card, numeric keypad capped at 216 rounds,
-lotus toast on save), Together tab (group stats + leaderboard), Journey tab
-(event history), Me tab (profile, temple aarti timings, sign out).
+**Devotee** — Japa tab (today's rounds, numeric keypad capped at 216, lotus
+toast on save; multi-day challenges accumulate day by day), Together tab
+(group stats + the leaderboard the admin has made visible), Journey tab
+(challenge history), Me tab (profile, temple aarti timings, sign out).
 
-**Admin** (header toggle, only shown to admins) — Overview dashboard
-(participation, top offerings, CSV export), Events (create / edit / activate /
-close / reopen, with per-event leaderboard visibility), Devotees (searchable
-directory with phone numbers and submission status).
+**Admin** (header toggle, only shown to admins):
+
+- **Challenges** — create / edit / start / close / reopen, with a start and
+  end date, daily open/close times, group goal, description/rules, ranking
+  parameter and leaderboard visibility. Only admins can start a challenge;
+  the database enforces it.
+- **Leaderboard controls** — per-challenge visibility (names, devotee IDs,
+  admin-only, or fully off) and a ranking parameter (total rounds or daily
+  progress). The Overview tab chooses which challenge's leaderboard devotees
+  see — automatic (the live one) or any past challenge.
+- **Admin roles** — promote or demote any devotee from the Devotees tab.
+  The database guarantees at least one admin always remains.
+- **Overview** — participation, top offerings, CSV export.
+- **Devotees** — searchable directory with phone numbers and status.
 
 ## Developing
 
