@@ -24,45 +24,38 @@ create table if not exists public.profiles (
 create table if not exists public.events (
   id          uuid primary key default gen_random_uuid(),
   name        text not null,
-  event_date  date not null,
-  end_date    date,
+  -- A challenge is one continuous window: it opens at start_at and
+  -- closes at end_at. It does not repeat daily.
+  start_at    timestamptz not null,
+  end_at      timestamptz not null,
   status      text not null default 'upcoming'
               check (status in ('draft', 'upcoming', 'active', 'closed')),
-  starts_at   text not null default '00:00',
-  ends_at     text not null default '23:59',
   goal_rounds integer not null default 3000 check (goal_rounds > 0),
   visibility  text not null default 'names'
               check (visibility in ('names', 'ids', 'admin', 'off')),
-  rank_by     text not null default 'total'
-              check (rank_by in ('total', 'daily')),
-  featured    boolean not null default false,
   description text default '',
-  created_at  timestamptz not null default now()
+  created_at  timestamptz not null default now(),
+  constraint events_window_check check (end_at >= start_at)
 );
 
--- Rounds are recorded per devotee per day, so multi-day challenges
--- accumulate and "daily progress" ranking is possible.
+-- One running total per devotee per challenge, editable while the
+-- challenge window is open.
 create table if not exists public.submissions (
   id         uuid primary key default gen_random_uuid(),
   event_id   uuid not null references public.events on delete cascade,
   user_id    uuid not null references public.profiles on delete cascade,
   rounds     integer not null check (rounds >= 0 and rounds <= 216),
-  entry_date date not null default (now() at time zone 'Asia/Kolkata')::date,
   updated_at timestamptz not null default now(),
-  unique (event_id, user_id, entry_date)
+  unique (event_id, user_id)
 );
 
 create index if not exists submissions_event_idx on public.submissions (event_id);
 create index if not exists events_status_idx     on public.events (status);
+create index if not exists events_window_idx     on public.events (start_at, end_at);
 
 -- Only one event may be live at a time.
 create unique index if not exists events_single_active_idx
   on public.events ((status)) where status = 'active';
-
--- At most one featured event (the leaderboard devotees see; when none
--- is set the app falls back to the live challenge).
-create unique index if not exists events_single_featured_idx
-  on public.events ((featured)) where featured;
 
 -- ---------- Helper: am I an admin? ----------
 -- SECURITY DEFINER so policies can call it without recursing into
@@ -121,18 +114,13 @@ security definer
 stable
 set search_path = public
 as $$
-  with per_user as (
-    select user_id, sum(rounds) as r
-    from public.submissions
-    where event_id = p_event and rounds > 0
-    group by user_id
-  )
   select
-    coalesce(sum(r), 0)::bigint,
+    coalesce(sum(rounds), 0)::bigint,
     count(*)::bigint,
-    coalesce(round(avg(r), 1), 0),
-    coalesce(max(r), 0)::bigint
-  from per_user;
+    coalesce(round(avg(rounds), 1), 0),
+    coalesce(max(rounds), 0)::bigint
+  from public.submissions
+  where event_id = p_event and rounds > 0;
 $$;
 
 -- Admin-only devotee directory (includes phone numbers).
@@ -170,24 +158,6 @@ begin
     end if;
   end if;
   update public.profiles set is_admin = p_admin where id = p_target;
-end;
-$$;
-
--- ---------- Featured-challenge setter ----------
-create or replace function public.set_featured_event(p_event uuid)
-returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  if not public.is_admin() then
-    raise exception 'Only temple admins can choose the displayed leaderboard';
-  end if;
-  update public.events set featured = false where featured;
-  if p_event is not null then
-    update public.events set featured = true where id = p_event;
-  end if;
 end;
 $$;
 
@@ -250,12 +220,17 @@ create policy submissions_read on public.submissions
     )
   );
 
--- Rounds may only be recorded while the event is actually live.
+-- Rounds may only be recorded while the challenge window is genuinely
+-- open — published, started, and not yet ended.
 create policy submissions_insert_own on public.submissions
   for insert to authenticated
   with check (
     user_id = auth.uid()
-    and exists (select 1 from public.events e where e.id = event_id and e.status = 'active')
+    and exists (
+      select 1 from public.events e
+      where e.id = event_id and e.status = 'active'
+        and now() >= e.start_at and now() <= e.end_at
+    )
   );
 
 create policy submissions_update_own on public.submissions
@@ -263,7 +238,11 @@ create policy submissions_update_own on public.submissions
   using (user_id = auth.uid())
   with check (
     user_id = auth.uid()
-    and exists (select 1 from public.events e where e.id = event_id and e.status = 'active')
+    and exists (
+      select 1 from public.events e
+      where e.id = event_id and e.status = 'active'
+        and now() >= e.start_at and now() <= e.end_at
+    )
   );
 
 create policy submissions_admin_all on public.submissions
@@ -309,12 +288,14 @@ grant execute on function public.event_totals(uuid) to authenticated;
 grant execute on function public.admin_devotees() to authenticated;
 grant execute on function public.is_admin() to authenticated;
 grant execute on function public.set_admin(uuid, boolean) to authenticated;
-grant execute on function public.set_featured_event(uuid) to authenticated;
 
 -- ---------- Seed: a first event ----------
-insert into public.events (name, event_date, end_date, status, goal_rounds, visibility, description)
-select 'Ekadashi Japa Seva', current_date, current_date, 'active', 3000, 'names',
-       'Offer your chanting with devotion. Rounds can be updated until midnight.'
+insert into public.events (name, start_at, end_at, status, goal_rounds, visibility, description)
+select 'Ekadashi Japa Seva',
+       date_trunc('day', now() at time zone 'Asia/Kolkata') at time zone 'Asia/Kolkata',
+       (date_trunc('day', now() at time zone 'Asia/Kolkata') + interval '1 day' - interval '1 minute') at time zone 'Asia/Kolkata',
+       'active', 3000, 'names',
+       'Offer your chanting with devotion.'
 where not exists (select 1 from public.events);
 
 -- ============================================================

@@ -71,8 +71,10 @@ Permissions are enforced by Postgres row-level security, not by the interface �
 so they hold even if someone edits the page in their browser:
 
 - A devotee can read and write **only their own** submission.
-- Rounds can only be saved while an event's status is `active`; closed events
-  reject writes at the database level.
+- Rounds can only be saved while the challenge window is genuinely open —
+  published, started, and not yet ended. The database checks the timestamps,
+  so a closed or not-yet-open challenge rejects writes even if the interface
+  is bypassed.
 - Only accounts with `is_admin = true` can create, edit, activate or close
   events, and only they can read the devotee directory with phone numbers.
 - The **Admin only** leaderboard setting is a real privacy guarantee: the
@@ -93,16 +95,20 @@ so they hold even if someone edits the page in their browser:
 | `store.js` | Data layer — the Supabase and demo implementations behind one async API |
 | `config.js` | Your Supabase keys (blank = demo mode) |
 | `supabase/schema.sql` | Tables, policies and functions; run once in the SQL Editor |
+| `supabase/fix-002-challenges.sql` | Migration for projects created before challenge windows existed |
 | `manifest.webmanifest` | Installable-app metadata — devotees can add it to their home screen |
 | `assets/` | Temple logo, Srila Prabhupada portrait, and generated app icons |
 
 ## Features
 
-**Devotee** — three tabs: Japa (today's rounds, numeric keypad capped at 216,
-lotus toast on save; multi-day challenges accumulate day by day), Leaderboard
-(percentage of the goal completed, group stats, and the current challenge's
-leaders as the admin configured them), and Me (profile, challenge history,
-sign out).
+A **challenge** is one continuous window: it opens at a chosen date and time
+and closes at a chosen date and time. It does not repeat daily. Each devotee
+keeps a single running total for that window, editable until it closes.
+
+**Devotee** — three tabs: Japa (your rounds for the challenge, numeric keypad
+capped at 216, lotus toast on save), Leaderboard (percentage of the goal
+completed, group stats, and the leaders ranked by total rounds), and Me
+(profile, challenge history, sign out).
 
 **Admins keep every devotee ability** and gain a fourth tab. There is no mode
 switch: an admin records their own rounds and appears on the leaderboard like
@@ -110,17 +116,16 @@ anyone else, and the Admin tab adds Overview / Challenges / Devotees.
 
 **Admin** (header toggle, only shown to admins):
 
-- **Challenges** — create / edit / start / close / reopen, with a start and
-  end date, daily open/close times, group goal, description/rules, ranking
-  parameter and leaderboard visibility. A live challenge can be edited
-  mid-flight: extend the dates or closing time and raise the goal without
-  losing any rounds already offered. Only admins can start a challenge;
-  the database enforces it. Closing one shows "Challenge completed" to
-  everyone.
-- **Leaderboard controls** — per-challenge visibility (names, devotee IDs,
-  admin-only, or fully off) and a ranking parameter (total rounds or daily
-  progress). One challenge runs at a time, and the Leaderboard tab always
-  shows that challenge.
+- **Challenges** — create / edit / publish / close / reopen. A challenge has
+  a start date-and-time, an end date-and-time, a group goal, description and
+  rules, and a leaderboard visibility setting. A running challenge can be
+  edited mid-flight: move the end later or raise the goal without losing any
+  rounds already offered. Only admins can start one; the database enforces
+  it. Once the end moment passes the challenge reads "Challenge completed"
+  and rounds are refused — in the interface and at the database.
+- **Leaderboard controls** — per-challenge visibility: names, devotee IDs,
+  admin-only, or fully off. One challenge runs at a time, and the Leaderboard
+  tab always shows that challenge, ranked by total rounds.
 - **Admin roles** — promote or demote any devotee from the Devotees tab.
   The database guarantees at least one admin always remains.
 - **Overview** — participation, top offerings, CSV export.

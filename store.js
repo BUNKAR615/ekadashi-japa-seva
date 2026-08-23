@@ -9,15 +9,14 @@
    The app talks to this module and never to Supabase directly, so the
    two modes stay interchangeable.
 
-   Rounds are recorded per devotee per DAY (entry_date), so multi-day
-   challenges accumulate and "daily progress" ranking works.
+   A challenge is one continuous window (start_at → end_at). Each
+   devotee keeps a single running total for that window.
    ============================================================ */
 (function () {
   'use strict';
 
   const MAX_ROUNDS = 216;
 
-  const todayStr = () => new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD, local
   const localTime = iso => {
     const d = new Date(iso);
     return isNaN(d) ? '' : d.toTimeString().slice(0, 5);
@@ -41,21 +40,31 @@
   const OTHERS_SUBMITTED = 73;
 
   function seedEvents() {
-    const iso = d => d.toISOString().slice(0, 10);
-    const today = new Date();
-    const shift = n => { const d = new Date(today); d.setDate(d.getDate() + n); return iso(d); };
-    const base = { starts_at: '00:00', ends_at: '23:59', goal_rounds: 3000, visibility: 'names', rank_by: 'total', featured: false };
+    // Build a window: n days from today at the given hour, lasting `hours`.
+    const at = (dayOffset, hour, minute) => {
+      const d = new Date();
+      d.setDate(d.getDate() + dayOffset);
+      d.setHours(hour, minute, 0, 0);
+      return d.toISOString();
+    };
+    const base = { goal_rounds: 3000, visibility: 'names' };
     return [
-      Object.assign({}, base, { id: 'e1', name: 'Ekadashi Japa Seva', event_date: iso(today), end_date: iso(today), status: 'active',
-        description: 'Offer your chanting with devotion. Rounds can be updated until midnight.' }),
-      Object.assign({}, base, { id: 'e2', name: 'Ekadashi Japa Seva', event_date: shift(14), end_date: shift(14), status: 'upcoming', description: '' }),
-      Object.assign({}, base, { id: 'e3', name: 'Ekadashi Japa Seva', event_date: shift(-17), end_date: shift(-17), status: 'closed',
+      Object.assign({}, base, { id: 'e1', name: 'Ekadashi Japa Seva',
+        start_at: at(0, 4, 30), end_at: at(0, 21, 0), status: 'active',
+        description: 'Offer your chanting with devotion between Mangala Arti and Shayan Arti.' }),
+      Object.assign({}, base, { id: 'e2', name: 'Ekadashi Japa Seva',
+        start_at: at(14, 4, 30), end_at: at(14, 21, 0), status: 'upcoming', description: '' }),
+      Object.assign({}, base, { id: 'e3', name: 'Ekadashi Japa Seva',
+        start_at: at(-17, 4, 30), end_at: at(-17, 21, 0), status: 'closed',
         description: '', baseRounds: 1908, baseParticipants: 68 }),
-      Object.assign({}, base, { id: 'e5', name: 'Ekadashi Japa Seva', event_date: shift(-32), end_date: shift(-32), status: 'closed',
+      Object.assign({}, base, { id: 'e5', name: 'Ekadashi Japa Seva',
+        start_at: at(-32, 4, 30), end_at: at(-32, 21, 0), status: 'closed',
         description: '', baseRounds: 1642, baseParticipants: 61 }),
-      Object.assign({}, base, { id: 'e0', name: 'Purushottama Japa Retreat', event_date: shift(-46), end_date: shift(-40), status: 'closed',
+      Object.assign({}, base, { id: 'e0', name: 'Purushottama Japa Retreat',
+        start_at: at(-46, 4, 30), end_at: at(-40, 21, 0), status: 'closed',
         description: '', baseRounds: 2204, baseParticipants: 70 }),
-      Object.assign({}, base, { id: 'e4', name: 'Janmashtami Maha-Japa', event_date: shift(18), end_date: shift(18), status: 'draft', goal_rounds: 4000,
+      Object.assign({}, base, { id: 'e4', name: 'Janmashtami Maha-Japa',
+        start_at: at(18, 4, 30), end_at: at(19, 21, 0), status: 'draft', goal_rounds: 4000,
         description: 'A special maha-japa offering for Sri Krishna Janmashtami.' })
     ];
   }
@@ -77,10 +86,12 @@
     if (!Array.isArray(s.events) || s.events.length === 0) s.events = seedEvents();
     if (!s.mySubmissions || typeof s.mySubmissions !== 'object') s.mySubmissions = {};
     s.adminOverrides = s.adminOverrides || {};
+    // Upgrade states saved under the older date-only model.
     (s.events || []).forEach(e => {
-      if (!e.end_date) e.end_date = e.event_date;
-      if (!e.rank_by) e.rank_by = 'total';
-      if (e.featured == null) e.featured = false;
+      if (!e.start_at) e.start_at = new Date((e.event_date || new Date().toISOString().slice(0, 10)) + 'T00:00').toISOString();
+      if (!e.end_at) e.end_at = new Date((e.end_date || e.event_date || new Date().toISOString().slice(0, 10)) + 'T23:59').toISOString();
+      delete e.event_date; delete e.end_date; delete e.starts_at; delete e.ends_at;
+      delete e.rank_by; delete e.featured;
     });
 
     const save = () => { try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch (e) {} };
@@ -93,7 +104,7 @@
     function people(eventId) {
       const list = OTHERS.map(o => ({
         userId: o.id, name: o.name, devoteeId: o.id, phone: o.phone,
-        rounds: o.rounds, total: o.rounds, today: o.rounds, time: o.time,
+        rounds: o.rounds, total: o.rounds, time: o.time,
         me: false, isAdmin: isAdminId(o.id)
       }));
       if (s.user) {
@@ -101,7 +112,7 @@
         const r = sub ? sub.rounds : 0;
         list.push({
           userId: s.user.devoteeId, name: s.user.name, devoteeId: s.user.devoteeId, phone: s.user.phone,
-          rounds: r, total: r, today: r, time: sub ? sub.time : '—',
+          rounds: r, total: r, time: sub ? sub.time : '—',
           me: true, isAdmin: isAdminId(s.user.devoteeId)
         });
       }
@@ -183,15 +194,15 @@
         return s.events
           .filter(e => s.mySubmissions[e.id])
           .map(e => ({
-            eventId: e.id, name: e.name, date: e.event_date, status: e.status,
+            eventId: e.id, name: e.name, date: e.start_at, status: e.status,
             rounds: s.mySubmissions[e.id].rounds, time: s.mySubmissions[e.id].time
           }))
-          .sort((a, b) => b.date.localeCompare(a.date));
+          .sort((a, b) => String(b.date).localeCompare(String(a.date)));
       },
 
       async createEvent(data) {
         if (data.status === 'active') s.events.forEach(e => { if (e.status === 'active') e.status = 'closed'; });
-        s.events.push(Object.assign({ id: 'e' + Date.now(), featured: false }, data));
+        s.events.push(Object.assign({ id: 'e' + Date.now() }, data));
         save();
       },
 
@@ -221,10 +232,6 @@
         save();
       },
 
-      async setFeatured(eventId) {
-        s.events.forEach(e => { e.featured = !!eventId && e.id === eventId; });
-        save();
-      }
     };
   }
 
@@ -261,13 +268,10 @@
 
     function mapEvent(r) {
       return {
-        id: r.id, name: r.name, event_date: r.event_date,
-        end_date: r.end_date || r.event_date,
+        id: r.id, name: r.name,
+        start_at: r.start_at, end_at: r.end_at,
         status: r.status,
-        starts_at: r.starts_at, ends_at: r.ends_at,
         goal_rounds: r.goal_rounds, visibility: r.visibility,
-        rank_by: r.rank_by || 'total',
-        featured: !!r.featured,
         description: r.description || ''
       };
     }
@@ -310,12 +314,12 @@
         const { data, error } = await sb
           .from('events')
           .select('*')
-          .order('event_date', { ascending: false });
+          .order('start_at', { ascending: false });
         if (error) throw error;
         return data.map(mapEvent);
       },
 
-      // Today's rounds for this devotee.
+      // This devotee's running total for the challenge.
       async myRounds(eventId) {
         const me = await this.currentUser();
         if (!me) return 0;
@@ -324,7 +328,6 @@
           .select('rounds')
           .eq('event_id', eventId)
           .eq('user_id', me.id)
-          .eq('entry_date', todayStr())
           .maybeSingle();
         if (error) throw error;
         return data ? data.rounds : 0;
@@ -336,14 +339,13 @@
         const { error } = await sb.from('submissions').upsert({
           event_id: eventId,
           user_id: me.id,
-          entry_date: todayStr(),
           rounds: Math.min(MAX_ROUNDS, rounds),
           updated_at: new Date().toISOString()
-        }, { onConflict: 'event_id,user_id,entry_date' });
+        }, { onConflict: 'event_id,user_id' });
         if (error) {
-          // RLS rejects writes once an event is closed.
+          // RLS rejects writes outside the challenge window.
           throw new Error(/row-level security/i.test(error.message)
-            ? 'This event is closed, so rounds can no longer be changed.'
+            ? 'This challenge is not open right now, so rounds cannot be changed.'
             : error.message);
         }
       },
@@ -362,32 +364,26 @@
         };
       },
 
-      // One row per devotee: {total, today, time}. Visibility is enforced
-      // by RLS — for 'admin'/'off' events non-admins get no rows back.
+      // One row per devotee. Visibility is enforced by RLS — for
+      // admin-only or disabled leaderboards non-admins get no rows back.
       async leaderboard(eventId) {
         const me = await this.currentUser();
         const { data, error } = await sb
           .from('submissions')
-          .select('rounds,entry_date,updated_at,user_id,profiles(name,devotee_id)')
+          .select('rounds,updated_at,user_id,profiles(name,devotee_id)')
           .eq('event_id', eventId)
-          .gt('rounds', 0);
+          .gt('rounds', 0)
+          .order('rounds', { ascending: false });
         if (error) throw error;
-        const today = todayStr();
-        const byUser = {};
-        data.forEach(r => {
-          const u = byUser[r.user_id] || (byUser[r.user_id] = {
-            userId: r.user_id,
-            name: r.profiles ? r.profiles.name : 'Devotee',
-            devoteeId: r.profiles ? r.profiles.devotee_id : '—',
-            total: 0, today: 0, time: '', _t: '',
-            me: !!me && r.user_id === me.id,
-            phone: ''
-          });
-          u.total += r.rounds;
-          if (r.entry_date === today) u.today = r.rounds;
-          if (!u._t || (r.updated_at || '') > u._t) { u._t = r.updated_at || ''; u.time = localTime(r.updated_at); }
-        });
-        return Object.values(byUser).sort((a, b) => b.total - a.total);
+        return data.map(r => ({
+          userId: r.user_id,
+          name: r.profiles ? r.profiles.name : 'Devotee',
+          devoteeId: r.profiles ? r.profiles.devotee_id : '-',
+          total: r.rounds, rounds: r.rounds,
+          time: localTime(r.updated_at),
+          me: !!me && r.user_id === me.id,
+          phone: ''
+        }));
       },
 
       async devotees(eventId) {
@@ -398,19 +394,15 @@
         if (eventId) {
           const { data: subs } = await sb.from('submissions')
             .select('user_id,rounds,updated_at').eq('event_id', eventId);
-          (subs || []).forEach(x => {
-            const u = byUser[x.user_id] || (byUser[x.user_id] = { total: 0, _t: '' });
-            u.total += x.rounds;
-            if ((x.updated_at || '') > u._t) u._t = x.updated_at || '';
-          });
+          (subs || []).forEach(x => { byUser[x.user_id] = x; });
         }
         return dir.map(p => {
           const sub = byUser[p.id];
           return {
             userId: p.id,
-            name: p.name, devoteeId: p.devotee_id, phone: p.phone || '—',
-            rounds: sub ? sub.total : 0,
-            time: sub && sub._t ? localTime(sub._t) : '—',
+            name: p.name, devoteeId: p.devotee_id, phone: p.phone || '-',
+            rounds: sub ? sub.rounds : 0,
+            time: sub ? localTime(sub.updated_at) : '-',
             me: !!me && p.id === me.id,
             isAdmin: p.is_admin
           };
@@ -422,19 +414,13 @@
         if (!me) return [];
         const { data, error } = await sb
           .from('submissions')
-          .select('rounds,entry_date,updated_at,event_id,events(name,event_date,status)')
+          .select('rounds,updated_at,event_id,events(name,start_at,status)')
           .eq('user_id', me.id);
         if (error) throw error;
-        const byEvent = {};
-        data.filter(r => r.events).forEach(r => {
-          const h = byEvent[r.event_id] || (byEvent[r.event_id] = {
-            eventId: r.event_id, name: r.events.name, date: r.events.event_date,
-            status: r.events.status, rounds: 0, time: '', _t: ''
-          });
-          h.rounds += r.rounds;
-          if ((r.updated_at || '') > h._t) { h._t = r.updated_at || ''; h.time = localTime(r.updated_at); }
-        });
-        return Object.values(byEvent).sort((a, b) => b.date.localeCompare(a.date));
+        return data.filter(r => r.events).map(r => ({
+          eventId: r.event_id, name: r.events.name, date: r.events.start_at,
+          status: r.events.status, rounds: r.rounds, time: localTime(r.updated_at)
+        })).sort((a, b) => String(b.date).localeCompare(String(a.date)));
       },
 
       async createEvent(d) {
@@ -458,21 +444,15 @@
       async setAdmin(userId, makeAdmin) {
         const { error } = await sb.rpc('set_admin', { p_target: userId, p_admin: makeAdmin });
         if (error) throw new Error(error.message);
-      },
-
-      async setFeatured(eventId) {
-        const { error } = await sb.rpc('set_featured_event', { p_event: eventId || null });
-        if (error) throw new Error(error.message);
       }
     };
 
     function toRow(d) {
       return {
-        name: d.name, event_date: d.event_date, end_date: d.end_date || d.event_date,
+        name: d.name,
+        start_at: d.start_at, end_at: d.end_at,
         status: d.status,
-        starts_at: d.starts_at, ends_at: d.ends_at,
         goal_rounds: d.goal_rounds, visibility: d.visibility,
-        rank_by: d.rank_by || 'total',
         description: d.description || ''
       };
     }

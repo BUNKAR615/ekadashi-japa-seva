@@ -36,32 +36,57 @@
 
   function fmtDateShort(iso) {
     if (!iso) return '';
-    const d = new Date(iso + 'T00:00:00');
-    return isNaN(d) ? iso : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    const d = new Date(iso);
+    return isNaN(d) ? '' : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
   }
-  function fmtDateLong(iso) {
+  function fmtTime(iso) {
     if (!iso) return '';
-    const d = new Date(iso + 'T00:00:00');
-    return isNaN(d) ? iso : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+    const d = new Date(iso);
+    return isNaN(d) ? '' : d.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true }).toUpperCase();
   }
-  const isMultiDay = e => e && e.end_date && e.end_date !== e.event_date;
-  const dateRange = e => isMultiDay(e)
-    ? `${fmtDateShort(e.event_date)} – ${fmtDateShort(e.end_date)}`
-    : fmtDateShort(e.event_date);
+  const fmtStamp = iso => iso ? `${fmtDateShort(iso)}, ${fmtTime(iso)}` : '';
+
+  const sameDay = e => e && new Date(e.start_at).toDateString() === new Date(e.end_at).toDateString();
+
+  // The full challenge window, written the shortest way that stays clear.
+  const dateRange = e => !e ? '' : (sameDay(e)
+    ? `${fmtDateShort(e.start_at)}, ${fmtTime(e.start_at)} – ${fmtTime(e.end_at)}`
+    : `${fmtStamp(e.start_at)} – ${fmtStamp(e.end_at)}`);
+
+  // A challenge is only open between its start and end moments.
+  function windowState(e) {
+    if (!e) return 'none';
+    if (e.status === 'draft') return 'draft';
+    if (e.status === 'closed') return 'ended';
+    const now = Date.now();
+    if (now < new Date(e.start_at).getTime()) return 'notStarted';
+    if (now > new Date(e.end_at).getTime()) return 'ended';
+    return e.status === 'active' ? 'open' : 'notStarted';
+  }
+  const isOpen = e => windowState(e) === 'open';
+
+  // "in 2 days", "in 3 hours", "in 14 minutes"
+  function untilText(iso) {
+    const ms = new Date(iso).getTime() - Date.now();
+    if (ms <= 0) return 'now';
+    const mins = Math.round(ms / 60000);
+    if (mins < 60) return `in ${mins} minute${mins === 1 ? '' : 's'}`;
+    const hrs = Math.round(mins / 60);
+    if (hrs < 48) return `in ${hrs} hour${hrs === 1 ? '' : 's'}`;
+    return `in ${Math.round(hrs / 24)} days`;
+  }
 
   const activeEvent  = () => data.events.find(e => e.status === 'active');
   const nextUpcoming = () => data.events.filter(e => e.status === 'upcoming')
-    .sort((a, b) => a.event_date.localeCompare(b.event_date))[0];
+    .sort((a, b) => String(a.start_at).localeCompare(String(b.start_at)))[0];
   const lastClosed   = () => data.events.filter(e => e.status === 'closed')
-    .sort((a, b) => b.event_date.localeCompare(a.event_date))[0];
+    .sort((a, b) => String(b.start_at).localeCompare(String(a.start_at)))[0];
 
   const isAdmin = () => !!(data.user && data.user.isAdmin);
 
-  // Sort board rows by the challenge's ranking parameter.
-  function rankSorted(rows, ev) {
-    const daily = ev && ev.rank_by === 'daily';
-    const metric = daily ? (p => p.today) : (p => p.total);
-    return rows.slice().sort((a, b) => (metric(b) - metric(a)) || (b.total - a.total));
+  // Ranked by total rounds offered within the challenge window.
+  function rankSorted(rows) {
+    return rows.slice().sort((a, b) => b.total - a.total);
   }
 
   /* ---------- Loading ---------- */
@@ -285,44 +310,48 @@
         <div class="card no-event-card">
           <p class="big">No active Japa challenge</p>
           <p class="small">${next
-            ? `The next challenge begins ${esc(fmtDateLong(next.event_date))}. Your rounds can be offered then.`
+            ? `The next challenge opens ${esc(fmtStamp(next.start_at))}. Your rounds can be offered then.`
             : 'A new Japa challenge will be announced soon.'}</p>
         </div>
         ${quoteCard()}${mantraBlock()}
       </div>`;
     }
 
-    const closed = ev.status !== 'active';
+    const state = windowState(ev);
+    const open = state === 'open';
+    const ended = state === 'ended';
+    const notStarted = state === 'notStarted' || state === 'draft';
     const rounds = data.mine;
     const t = data.totals;
     const pct = ev.goal_rounds ? Math.round((t.total / ev.goal_rounds) * 100) : 0;
     const barPct = Math.min(100, pct);
-    const eyebrow = isMultiDay(ev) ? dateRange(ev) : `Ekadashi · ${fmtDateShort(ev.event_date)}`;
 
     return `<div class="pad">
       <div class="card event-card">
         <div class="event-top">
-          <span class="eyebrow">${esc(eyebrow)}</span>
-          <span class="chip ${closed ? 'closed' : 'active'}">${closed ? 'Completed' : 'Active'}</span>
+          <span class="eyebrow">${esc(dateRange(ev))}</span>
+          <span class="chip ${ended ? 'closed' : open ? 'active' : 'upcoming'}">${
+            ended ? 'Completed' : open ? 'Open' : 'Not started'}</span>
         </div>
-        ${closed ? '<div class="completed-banner">Challenge completed</div>' : ''}
+        ${ended ? '<div class="completed-banner">Challenge completed</div>' : ''}
         <h2 class="event-title">${esc(ev.name)}</h2>
-        <div class="rounds-label">Your rounds today</div>
+        <div class="rounds-label">Your rounds</div>
         <div class="rounds-num">${rounds}</div>
         <div class="rounds-caption">${rounds === 0
           ? 'Not recorded yet'
           : `${fmt(rounds * NAMES_PER_ROUND)} holy names`}</div>
-        <button type="button" class="cta ${closed ? 'dead' : 'live'}" data-action="open-sheet">
-          ${closed ? 'Challenge completed' : (rounds === 0 ? 'Record my rounds' : 'Update Rounds')}
+        <button type="button" class="cta ${open ? 'live' : 'dead'}" data-action="open-sheet">
+          ${ended ? 'Challenge completed' : notStarted ? 'Not started yet' : (rounds === 0 ? 'Record my rounds' : 'Update Rounds')}
         </button>
-        <div class="cta-hint">${closed
-          ? 'Your rounds are saved in your profile'
-          : `You can change this any time until ${esc(ev.ends_at)}${isMultiDay(ev) ? ' · rounds are counted each day' : ''}`}</div>
+        <div class="cta-hint">${
+          ended ? `Ended ${esc(fmtStamp(ev.end_at))}`
+          : notStarted ? `Opens ${esc(fmtStamp(ev.start_at))} · ${esc(untilText(ev.start_at))}`
+          : `Open until ${esc(fmtStamp(ev.end_at))} · closes ${esc(untilText(ev.end_at))}`}</div>
       </div>
 
       <div class="card together-card">
         <div class="together-top">
-          <span class="eyebrow">Together${isMultiDay(ev) ? '' : ' today'}</span>
+          <span class="eyebrow">Together</span>
           <a href="#" data-action="goto-together">See all</a>
         </div>
         <div class="group-row">
@@ -369,12 +398,11 @@
       </div>`;
     }
     const t = data.totals;
-    const daily = ev.rank_by === 'daily';
-    const people = rankSorted(data.leaders, ev);
+    const people = rankSorted(data.leaders);
     const off = ev.visibility === 'off';
     const privated = ev.visibility === 'admin' && !isAdmin();
 
-    const closed = ev.status !== 'active';
+    const closed = windowState(ev) === 'ended';
     const pct = ev.goal_rounds ? Math.round((t.total / ev.goal_rounds) * 100) : 0;
     const barPct = Math.min(100, pct);
 
@@ -421,20 +449,18 @@
               <div class="nm">${esc(ev.visibility === 'ids' ? p.devoteeId : p.name)}</div>
               <div class="sb">${ev.visibility === 'ids'
                 ? (p.me ? 'You' : 'Devotee')
-                : (p.me ? 'You · ' + esc(p.devoteeId) : esc(p.devoteeId))}${
-                daily ? ' · ' + fmt(p.total) + ' total' : ''}</div>
+                : (p.me ? 'You · ' + esc(p.devoteeId) : esc(p.devoteeId))}</div>
             </div>
-            <div class="cnt">${daily ? p.today : p.total}</div>
+            <div class="cnt">${p.total}</div>
           </div>`).join('')}
       </div>
       <p class="board-note">Not a competition — a shared offering.<br>${
-        daily ? 'Ranked by today’s progress.' :
-        ev.visibility === 'ids' ? 'Shown by Devotee ID for this challenge.' : 'Ranked by total rounds.'}</p>`;
+        ev.visibility === 'ids' ? 'Shown by Devotee ID, ranked by total rounds.' : 'Ranked by total rounds.'}</p>`;
     }
 
     return `<div class="pad-lg">
       <h2 class="h2">Leaderboard</h2>
-      <p class="sub">${esc(ev.name)} · ${esc(dateRange(ev))}</p>
+      <p class="sub">${esc(ev.name)}<br>${esc(dateRange(ev))}</p>
       ${progress}
       <div class="stat-grid" style="margin-top:12px">
         ${stats.map(s => `<div class="stat-tile"><div class="lbl">${s.label}</div><div class="val">${s.value}</div></div>`).join('')}
@@ -523,10 +549,10 @@
     const ev = activeEvent();
     const t = data.totals;
     const pct = ev && t.capacity ? Math.round((t.participants / t.capacity) * 100) : 0;
-    const top = ev ? rankSorted(data.activeLeaders, ev).slice(0, 4) : [];
+    const top = ev ? rankSorted(data.activeLeaders).slice(0, 4) : [];
 
     const stats = ev ? [
-      { label: 'Live challenge', value: ev.name.split(' ')[0], sub: `${dateRange(ev)} · until ${ev.ends_at}` },
+      { label: 'Live challenge', value: ev.name.split(' ')[0], sub: dateRange(ev) },
       { label: 'Total devotees', value: fmt(t.capacity), sub: 'registered' },
       { label: 'Total rounds', value: fmt(t.total), sub: 'this challenge' },
       { label: 'Average rounds', value: String(t.average), sub: 'per participant' }
@@ -541,8 +567,8 @@
       <div class="card admin-head">
         <h2>Admin</h2>
         <div class="live-line">
-          <span class="live-dot${ev ? '' : ' off'}"></span>
-          ${ev ? `${esc(ev.name)} · live until ${esc(ev.ends_at)}` : 'No challenge is live right now'}
+          <span class="live-dot${ev && isOpen(ev) ? '' : ' off'}"></span>
+          ${ev ? `${esc(ev.name)} · ${isOpen(ev) ? 'open until ' + esc(fmtStamp(ev.end_at)) : windowState(ev) === 'notStarted' ? 'opens ' + esc(fmtStamp(ev.start_at)) : 'window has ended'}` : 'No challenge is live right now'}
         </div>
       </div>
 
@@ -569,7 +595,7 @@
           <div class="top-row">
             <div class="rk">${i + 1}</div>
             <div class="who"><div class="nm">${esc(p.name)}</div><div class="sb">${esc(p.devoteeId)} · ${esc(p.time)}</div></div>
-            <div class="n">${ev.rank_by === 'daily' ? p.today : p.total}</div>
+            <div class="n">${p.total}</div>
           </div>`).join('')}
       </div>` : ''}
     </div>`;
@@ -581,27 +607,25 @@
     const vis = e.visibility === 'names' ? 'names visible'
       : e.visibility === 'ids' ? 'devotee IDs'
       : e.visibility === 'admin' ? 'admin only' : 'leaderboard off';
-    const rank = e.rank_by === 'daily' ? 'daily progress' : 'total rounds';
-    switch (e.status) {
-      case 'active':   return `Live now · ${e.starts_at}–${e.ends_at} · ${vis}`;
-      case 'upcoming': return `Leaderboard: ${vis} · ranked by ${rank}`;
-      case 'closed':   return `Closed · goal was ${fmt(e.goal_rounds)} rounds`;
-      default:         return 'Draft — not visible to devotees yet';
-    }
+    const st = windowState(e);
+    if (e.status === 'draft') return 'Draft — not visible to devotees yet';
+    if (st === 'open')       return `Open now, closes ${untilText(e.end_at)} · ${vis}`;
+    if (st === 'notStarted') return `Opens ${untilText(e.start_at)} · ${vis}`;
+    return `Ended · goal was ${fmt(e.goal_rounds)} rounds`;
   }
   function eventPrimary(e) {
     switch (e.status) {
       case 'active':   return { label: 'Close', action: 'close-event' };
-      case 'upcoming': return { label: 'Start now', action: 'activate-event' };
+      case 'upcoming': return { label: 'Publish now', action: 'activate-event' };
       case 'closed':   return { label: 'Reopen', action: 'reopen-event' };
-      default:         return { label: 'Start now', action: 'activate-event' };
+      default:         return { label: 'Publish now', action: 'activate-event' };
     }
   }
 
   function viewAdminEvents() {
     const order = { active: 0, upcoming: 1, draft: 2, closed: 3 };
     const events = data.events.slice().sort((a, b) =>
-      (order[a.status] - order[b.status]) || b.event_date.localeCompare(a.event_date));
+      (order[a.status] - order[b.status]) || String(b.start_at).localeCompare(String(a.start_at)));
     return `<div class="pad-lg">
       <div class="admin-header-row">
         <h2 class="h2" style="margin:0">Challenges</h2>
@@ -682,7 +706,14 @@
   /* ---------- Rounds sheet ---------- */
 
   function openRoundsSheet() {
-    if (!activeEvent()) return;
+    const ev = activeEvent();
+    if (!ev) return;
+    if (!isOpen(ev)) {
+      showError(windowState(ev) === 'notStarted'
+        ? `This challenge opens ${fmtStamp(ev.start_at)}.`
+        : 'This challenge has ended, so rounds can no longer be changed.');
+      return;
+    }
     ui.sheet = 'rounds';
     ui.draft = '';
     ui.capped = false;
@@ -713,6 +744,7 @@
   async function saveRounds() {
     const ev = activeEvent();
     if (!ev || ui.draft === '') { closeOverlay(); return; }
+    if (!isOpen(ev)) { closeOverlay(); showError('This challenge is not open right now.'); return; }
     const val = Math.min(MAX_ROUNDS, parseInt(ui.draft, 10) || 0);
     const first = data.mine === 0;
     const btn = $('[data-action="save-rounds"]');
@@ -722,7 +754,7 @@
       closeOverlay();
       await reload();
       toast(first ? 'Hare Krishna! Your chanting has been recorded.'
-                  : `Rounds updated — ${val} offered today.`);
+                  : `Rounds updated — ${val} offered.`);
     } catch (e) {
       if (btn) { btn.disabled = false; btn.textContent = 'Save Rounds'; }
       showError(e.message);
@@ -738,18 +770,17 @@
   }
 
   async function submitEventForm() {
-    const start = $('#ef-date').value || new Date().toLocaleDateString('en-CA');
-    let end = $('#ef-date2').value || start;
-    if (end < start) end = start;
+    const startRaw = $('#ef-start').value;
+    const endRaw = $('#ef-end').value;
+    if (!startRaw || !endRaw) { showError('Please set both the start and the end of the challenge.'); return; }
+    const start = new Date(startRaw), end = new Date(endRaw);
+    if (end <= start) { showError('The challenge must end after it starts.'); return; }
     const payload = {
       name: $('#ef-name').value.trim() || 'Ekadashi Japa Seva',
-      event_date: start,
-      end_date: end,
+      start_at: start.toISOString(),
+      end_at: end.toISOString(),
       status: $('#ef-status').value,
-      starts_at: $('#ef-start').value || '00:00',
-      ends_at: $('#ef-end').value || '23:59',
       goal_rounds: Math.max(100, parseInt($('#ef-goal').value, 10) || 3000),
-      rank_by: $('#ef-rank').value,
       description: $('#ef-desc').value.trim(),
       visibility: $('.vis-option.on') ? $('.vis-option.on').dataset.vis : 'names'
     };
@@ -792,7 +823,7 @@
       const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `${ev.name.replace(/\s+/g, '-')}-${ev.event_date}.csv`;
+      a.download = `${ev.name.replace(/\s+/g, '-')}-${String(ev.start_at).slice(0, 10)}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -815,7 +846,7 @@
         <div class="sheet">
           <div class="grabber"></div>
           <h3 style="text-align:center">How many rounds today?</h3>
-          <p class="sheet-sub">You can update this any time until ${esc(ev.ends_at)}</p>
+          <p class="sheet-sub">You can update this any time until ${esc(fmtStamp(ev.end_at))}</p>
           <div class="draft-box">
             <div class="draft-num" id="draft-num" style="color:#B3ACA1">${data.mine}</div>
             <div class="draft-hint" id="draft-hint" style="color:#B3ACA1">Currently recorded — type to replace</div>
@@ -836,8 +867,16 @@
       const edit = ui.editEventId ? data.events.find(x => x.id === ui.editEventId) : null;
       const e = edit || {
         name: 'Ekadashi Japa Seva',
-        event_date: '', end_date: '', status: 'upcoming', starts_at: '00:00', ends_at: '23:59',
-        goal_rounds: 3000, visibility: 'names', rank_by: 'total', description: ''
+        start_at: '', end_at: '', status: 'upcoming',
+        goal_rounds: 3000, visibility: 'names', description: ''
+      };
+      // datetime-local needs a local "YYYY-MM-DDTHH:MM" string.
+      const forInput = iso => {
+        if (!iso) return '';
+        const d = new Date(iso);
+        if (isNaN(d)) return '';
+        const pad = n => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
       };
       const visOpts = [
         { key: 'names', label: 'Public within group', desc: 'Everyone sees name + rounds' },
@@ -852,34 +891,19 @@
           <div class="grabber"></div>
           <h3>${edit ? 'Edit Japa Challenge' : 'New Japa Challenge'}</h3>
           ${edit && edit.status === 'active'
-            ? '<p class="sheet-sub" style="text-align:left;margin:2px 0 0">This challenge is live. You can extend the dates or times and raise the goal — devotees keep the rounds they have already offered.</p>'
+            ? '<p class="sheet-sub" style="text-align:left;margin:2px 0 0">This challenge is running. You can move the end date and time later or raise the goal — devotees keep the rounds they have already offered.</p>'
             : ''}
           <div class="form-col" style="margin-top:16px">
             <div><label class="field-label" for="ef-name">Challenge name</label>
               <input class="field" id="ef-name" type="text" value="${esc(e.name)}"></div>
-            <div class="form-row">
-              <div><label class="field-label" for="ef-date">Start date</label>
-                <input class="field" id="ef-date" type="date" value="${esc(e.event_date)}"></div>
-              <div><label class="field-label" for="ef-date2">End date</label>
-                <input class="field" id="ef-date2" type="date" value="${esc(e.end_date || e.event_date)}"></div>
-            </div>
-            <div class="form-row">
-              <div><label class="field-label" for="ef-status">Status</label>
-                <select class="field" id="ef-status">
-                  ${statuses.map(s => `<option value="${s}"${e.status === s ? ' selected' : ''}>${s.charAt(0).toUpperCase() + s.slice(1)}</option>`).join('')}
-                </select></div>
-              <div><label class="field-label" for="ef-rank">Ranking</label>
-                <select class="field" id="ef-rank">
-                  <option value="total"${e.rank_by !== 'daily' ? ' selected' : ''}>Total rounds</option>
-                  <option value="daily"${e.rank_by === 'daily' ? ' selected' : ''}>Daily progress</option>
-                </select></div>
-            </div>
-            <div class="form-row">
-              <div><label class="field-label" for="ef-start">Opens (daily)</label>
-                <input class="field" id="ef-start" type="time" value="${esc(e.starts_at)}"></div>
-              <div><label class="field-label" for="ef-end">Closes (daily)</label>
-                <input class="field" id="ef-end" type="time" value="${esc(e.ends_at)}"></div>
-            </div>
+            <div><label class="field-label" for="ef-start">Starts — date &amp; time</label>
+              <input class="field" id="ef-start" type="datetime-local" value="${esc(forInput(e.start_at))}"></div>
+            <div><label class="field-label" for="ef-end">Ends — date &amp; time</label>
+              <input class="field" id="ef-end" type="datetime-local" value="${esc(forInput(e.end_at))}"></div>
+            <div><label class="field-label" for="ef-status">Status</label>
+              <select class="field" id="ef-status">
+                ${statuses.map(s => `<option value="${s}"${e.status === s ? ' selected' : ''}>${s.charAt(0).toUpperCase() + s.slice(1)}</option>`).join('')}
+              </select></div>
             <div><label class="field-label" for="ef-goal">Group goal (rounds)</label>
               <input class="field" id="ef-goal" type="number" min="100" step="100" value="${e.goal_rounds}"></div>
             <div><label class="field-label" for="ef-desc">Description / rules</label>

@@ -1,54 +1,77 @@
 -- ============================================================
---  FIX 002 — challenge & leaderboard management
+--  FIX 002 — challenges, leaderboard control, admin roles
 --  Run this once in the Supabase SQL Editor. Safe to re-run.
 --
+--  A challenge is ONE CONTINUOUS WINDOW: it starts at a given date
+--  and time and ends at a given date and time. It does not repeat
+--  daily. Each devotee keeps a single running total for the whole
+--  challenge, editable while the window is open.
+--
 --  Adds:
---   1. Challenges with a start AND end date (multi-day support),
---      with rounds recorded per day.
---   2. Admin choice of ranking parameter: total rounds or daily
---      progress.
---   3. Leaderboard controls: per-challenge visibility including a
---      full "off" switch, and an admin-chosen featured challenge
---      whose leaderboard devotees see.
---   4. Admin role management: admins can promote or demote other
---      devotees, with a guard so at least one admin always remains.
+--   1. start_at / end_at timestamps on challenges.
+--   2. Rounds only accepted while the window is genuinely open —
+--      enforced in the database, not just the interface.
+--   3. Leaderboard controls: visibility including a full "off".
+--   4. Admin role management, with at least one admin always kept.
 -- ============================================================
 
--- ---------- 1. Events become challenges ----------
+-- ---------- 1. Challenges get a real start/end timestamp ----------
 alter table public.events add column if not exists end_date date;
 update public.events set end_date = event_date where end_date is null;
 
-alter table public.events add column if not exists rank_by text not null default 'total';
-alter table public.events drop constraint if exists events_rank_by_check;
-alter table public.events add constraint events_rank_by_check
-  check (rank_by in ('total', 'daily'));
+alter table public.events add column if not exists start_at timestamptz;
+alter table public.events add column if not exists end_at   timestamptz;
+
+-- Backfill from the older date + clock-time columns (times were IST).
+update public.events
+set start_at = ((event_date::text || ' ' || coalesce(nullif(starts_at, ''), '00:00'))::timestamp
+                at time zone 'Asia/Kolkata')
+where start_at is null;
+
+update public.events
+set end_at = ((coalesce(end_date, event_date)::text || ' ' || coalesce(nullif(ends_at, ''), '23:59'))::timestamp
+              at time zone 'Asia/Kolkata')
+where end_at is null;
+
+-- A window must not end before it begins.
+update public.events set end_at = start_at where end_at < start_at;
+
+alter table public.events alter column start_at set not null;
+alter table public.events alter column end_at   set not null;
+
+alter table public.events drop constraint if exists events_window_check;
+alter table public.events add constraint events_window_check check (end_at >= start_at);
 
 -- Visibility gains 'off' — the leaderboard fully disabled.
 alter table public.events drop constraint if exists events_visibility_check;
 alter table public.events add constraint events_visibility_check
   check (visibility in ('names', 'ids', 'admin', 'off'));
 
--- The challenge whose leaderboard devotees see. At most one; when none
--- is set the app falls back to the live challenge.
-alter table public.events add column if not exists featured boolean not null default false;
-drop index if exists public.events_single_featured_idx;
-create unique index events_single_featured_idx on public.events ((featured)) where featured;
-
--- ---------- 2. Rounds are recorded per day ----------
-alter table public.submissions add column if not exists entry_date date;
-update public.submissions
-  set entry_date = (updated_at at time zone 'Asia/Kolkata')::date
-  where entry_date is null;
-alter table public.submissions
-  alter column entry_date set default (now() at time zone 'Asia/Kolkata')::date;
-alter table public.submissions alter column entry_date set not null;
+-- ---------- 2. One running total per devotee per challenge ----------
+-- If an earlier per-day model was ever applied, collapse it by summing.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'submissions' and column_name = 'entry_date'
+  ) then
+    create temp table _collapsed as
+      select event_id, user_id, least(sum(rounds), 216) as rounds, max(updated_at) as updated_at
+      from public.submissions group by event_id, user_id;
+    delete from public.submissions;
+    alter table public.submissions drop constraint if exists submissions_event_user_day_key;
+    alter table public.submissions drop column entry_date;
+    insert into public.submissions (event_id, user_id, rounds, updated_at)
+      select event_id, user_id, rounds, updated_at from _collapsed;
+    drop table _collapsed;
+  end if;
+end $$;
 
 alter table public.submissions drop constraint if exists submissions_event_id_user_id_key;
-alter table public.submissions drop constraint if exists submissions_event_user_day_key;
-alter table public.submissions add constraint submissions_event_user_day_key
-  unique (event_id, user_id, entry_date);
+alter table public.submissions add constraint submissions_event_id_user_id_key
+  unique (event_id, user_id);
 
--- ---------- 3. Totals now aggregate per devotee across days ----------
+-- ---------- 3. Totals ----------
 drop function if exists public.event_totals(uuid);
 create function public.event_totals(p_event uuid)
 returns table (total bigint, participants bigint, average numeric, highest bigint)
@@ -57,22 +80,63 @@ security definer
 stable
 set search_path = public
 as $$
-  with per_user as (
-    select user_id, sum(rounds) as r
-    from public.submissions
-    where event_id = p_event and rounds > 0
-    group by user_id
-  )
   select
-    coalesce(sum(r), 0)::bigint,
+    coalesce(sum(rounds), 0)::bigint,
     count(*)::bigint,
-    coalesce(round(avg(r), 1), 0),
-    coalesce(max(r), 0)::bigint
-  from per_user;
+    coalesce(round(avg(rounds), 1), 0),
+    coalesce(max(rounds), 0)::bigint
+  from public.submissions
+  where event_id = p_event and rounds > 0;
 $$;
 grant execute on function public.event_totals(uuid) to authenticated;
 
--- ---------- 4. Admin role management ----------
+-- ---------- 4. Rounds only while the window is open ----------
+drop policy if exists submissions_insert_own on public.submissions;
+drop policy if exists submissions_update_own on public.submissions;
+
+create policy submissions_insert_own on public.submissions
+  for insert to authenticated
+  with check (
+    user_id = auth.uid()
+    and exists (
+      select 1 from public.events e
+      where e.id = event_id
+        and e.status = 'active'
+        and now() >= e.start_at
+        and now() <= e.end_at
+    )
+  );
+
+create policy submissions_update_own on public.submissions
+  for update to authenticated
+  using (user_id = auth.uid())
+  with check (
+    user_id = auth.uid()
+    and exists (
+      select 1 from public.events e
+      where e.id = event_id
+        and e.status = 'active'
+        and now() >= e.start_at
+        and now() <= e.end_at
+    )
+  );
+
+-- Leaderboard privacy: 'admin' and 'off' hide other devotees' rows
+-- at the database level, not merely in the interface.
+drop policy if exists submissions_read on public.submissions;
+create policy submissions_read on public.submissions
+  for select to authenticated
+  using (
+    user_id = auth.uid()
+    or public.is_admin()
+    or exists (
+      select 1 from public.events e
+      where e.id = submissions.event_id
+        and e.visibility in ('names', 'ids')
+    )
+  );
+
+-- ---------- 5. Admin role management ----------
 create or replace function public.set_admin(p_target uuid, p_admin boolean)
 returns void
 language plpgsql
@@ -92,24 +156,3 @@ begin
 end;
 $$;
 grant execute on function public.set_admin(uuid, boolean) to authenticated;
-
--- ---------- Featured-challenge setter ----------
--- Exclusive by design: clears the old flag before setting the new one.
--- Passing null returns to "automatic" (the live challenge).
-create or replace function public.set_featured_event(p_event uuid)
-returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  if not public.is_admin() then
-    raise exception 'Only temple admins can choose the displayed leaderboard';
-  end if;
-  update public.events set featured = false where featured;
-  if p_event is not null then
-    update public.events set featured = true where id = p_event;
-  end if;
-end;
-$$;
-grant execute on function public.set_featured_event(uuid) to authenticated;
