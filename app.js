@@ -259,7 +259,6 @@
   const DEV_TABS = [
     { key: 'japa', label: 'Japa' },
     { key: 'together', label: 'Together' },
-    { key: 'journey', label: 'Journey' },
     { key: 'me', label: 'Me' }
   ];
   const ADM_TABS = [
@@ -282,7 +281,6 @@
     switch (ui.tab) {
       case 'japa':      c.innerHTML = viewJapa(); break;
       case 'together':  c.innerHTML = viewTogether(); break;
-      case 'journey':   c.innerHTML = viewJourney(); break;
       case 'me':        c.innerHTML = viewMe(); break;
       case 'aOverview': c.innerHTML = viewAdminOverview(); break;
       case 'aEvents':   c.innerHTML = viewAdminEvents(); break;
@@ -340,7 +338,7 @@
           ${closed ? 'Challenge closed' : (rounds === 0 ? 'Record my rounds' : 'Update Rounds')}
         </button>
         <div class="cta-hint">${closed
-          ? 'Results stay in your Journey'
+          ? 'Your rounds are saved in your profile'
           : `You can change this any time until ${esc(ev.ends_at)}${isMultiDay(ev) ? ' · rounds are counted each day' : ''}`}</div>
       </div>
 
@@ -449,43 +447,33 @@
     </div>`;
   }
 
-  /* ----- Journey ----- */
-
-  function viewJourney() {
-    const items = data.history;
-    const total = items.reduce((s, h) => s + h.rounds, 0);
-    const active = activeEvent();
-
-    return `<div class="pad-lg">
-      <h2 class="h2">Journey</h2>
-      <p class="sub">${fmt(total)} rounds across ${items.length} challenge${items.length === 1 ? '' : 's'} with the temple</p>
-      ${items.length === 0
-        ? `<div class="private-card"><p class="big">Nothing recorded yet</p>
-             <p class="small">Once you offer rounds, each challenge will appear here.</p></div>`
-        : `<div class="list-card">
-            ${items.map(h => {
-              const isToday = active && h.eventId === active.id;
-              return `<div class="tl-row">
-                <div class="who">
-                  <div class="tl-date">${esc(fmtDateShort(h.date))}</div>
-                  <div class="tl-title">${esc(h.name)}</div>
-                  <div class="tl-note">${isToday ? 'In progress · updated at ' + esc(h.time) : 'Recorded at ' + esc(h.time)}</div>
-                </div>
-                <div style="flex:none">
-                  <div class="tl-rounds">${h.rounds}</div>
-                  <div class="tl-unit">rounds</div>
-                </div>
-              </div>`;
-            }).join('')}
-          </div>`}
-    </div>`;
-  }
-
   /* ----- Me ----- */
 
   function viewMe() {
     const u = data.user || {};
-    const total = data.history.reduce((s, h) => s + h.rounds, 0);
+    const items = data.history;
+    const total = items.reduce((s, h) => s + h.rounds, 0);
+    const active = activeEvent();
+    const journey = items.length === 0 ? '' : `
+      <div>
+        <div class="eyebrow" style="display:block;margin:4px 0 8px 4px">My journey</div>
+        <div class="list-card">
+          ${items.map(h => {
+            const isToday = active && h.eventId === active.id;
+            return `<div class="tl-row">
+              <div class="who">
+                <div class="tl-date">${esc(fmtDateShort(h.date))}</div>
+                <div class="tl-title">${esc(h.name)}</div>
+                <div class="tl-note">${isToday ? 'In progress · updated at ' + esc(h.time) : 'Recorded at ' + esc(h.time)}</div>
+              </div>
+              <div style="flex:none">
+                <div class="tl-rounds">${h.rounds}</div>
+                <div class="tl-unit">rounds</div>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
     const rows = [
       { label: 'Devotee ID', value: u.devoteeId || '—' },
       { label: 'Email', value: u.email || '—' },
@@ -499,9 +487,11 @@
         <div class="profile-id">${esc(u.devoteeId || '')}</div>
         <div class="profile-stats">
           <div class="profile-stat"><div class="n">${fmt(total)}</div><div class="l">Total rounds</div></div>
-          <div class="profile-stat"><div class="n">${data.history.length}</div><div class="l">Challenges joined</div></div>
+          <div class="profile-stat"><div class="n">${items.length}</div><div class="l">Challenges joined</div></div>
         </div>
       </div>
+
+      ${journey}
 
       <div class="list-card">
         ${rows.map(r => `<div class="profile-row"><span class="l">${r.label}</span><span class="v">${esc(r.value)}</span></div>`).join('')}

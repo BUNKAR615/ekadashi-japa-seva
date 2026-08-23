@@ -55,7 +55,7 @@ where id = (select id from auth.users where email = 'them@example.com');
 The **Admin** toggle appears in the header only for admin accounts.
 
 **5. Bump the cache version.** After changing `config.js`, edit `index.html` and
-raise `?v=7` to `?v=8` on the script and stylesheet tags, so phones pick up the
+raise the `?v=` number by one on the script and stylesheet tags, so phones pick up the
 new files instead of a cached copy.
 
 ### Email confirmation
@@ -98,10 +98,10 @@ so they hold even if someone edits the page in their browser:
 
 ## Features
 
-**Devotee** — Japa tab (today's rounds, numeric keypad capped at 216, lotus
-toast on save; multi-day challenges accumulate day by day), Together tab
-(group stats + the leaderboard the admin has made visible), Journey tab
-(challenge history), Me tab (profile, temple aarti timings, sign out).
+**Devotee** — three tabs. Japa (today's rounds, numeric keypad capped at 216,
+lotus toast on save; multi-day challenges accumulate day by day), Together
+(group stats + the leaderboard the admin has made visible), and Me (profile,
+challenge history, temple aarti timings, sign out).
 
 **Admin** (header toggle, only shown to admins):
 
