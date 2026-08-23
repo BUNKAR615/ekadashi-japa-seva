@@ -414,3 +414,11 @@ select.field{appearance:auto;-webkit-appearance:auto}
   background:var(--saffron);color:#fff;border-color:transparent;
 }
 .event-actions button.primary:active{background:#C56A26}
+
+
+/* Configured backend unreachable — must not be mistaken for normal */
+.mode-banner.alarm{
+  background:rgba(192,57,43,.12);
+  border-bottom-color:rgba(192,57,43,.35);
+  color:var(--danger);
+}

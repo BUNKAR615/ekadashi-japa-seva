@@ -436,14 +436,24 @@
     async create() {
       const cfg = window.JAPA_CONFIG || {};
       const forceDemo = /[?&]demo=1/.test(location.search);
-      if (!forceDemo && cfg.supabaseUrl && cfg.supabaseAnonKey && window.supabase) {
+      const configured = !!(cfg.supabaseUrl && cfg.supabaseAnonKey && window.supabase);
+
+      if (!forceDemo && configured) {
         try {
           const client = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
           const store = SupabaseStore(client);
           await store.listEvents();   // fail fast if the project is unreachable
           return store;
         } catch (e) {
-          console.warn('Supabase unavailable, falling back to demo mode:', e.message);
+          // The backend is configured but not answering correctly — usually a
+          // migration that has not been run. Falling back silently would show
+          // local data as though it were the temple's, so say so loudly
+          // instead: the store still works, but it is flagged as degraded.
+          console.error('Cannot reach the temple database:', e.message);
+          const store = DemoStore();
+          store.degraded = true;
+          store.degradedReason = e.message || 'The temple database did not respond as expected.';
+          return store;
         }
       }
       return DemoStore();

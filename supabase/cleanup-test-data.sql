@@ -1,80 +1,64 @@
 -- ============================================================
 --  CLEAN UP TEST DATA
---  Run in the Supabase SQL Editor. Read STEP 1 before running
---  STEP 2 — the deletions cannot be undone.
+--  Run in the Supabase SQL Editor, AFTER fix-002-challenges.sql.
 --
---  Keeps: the challenge named below, and the admin account.
---  Removes: every other challenge, and (optionally) every other
---           account along with the rounds they submitted.
+--  Read STEP 1 before deleting anything. Deletions cannot be undone,
+--  and real devotees have already registered — do not remove an
+--  account unless you recognise it as a test.
 -- ============================================================
 
 
 -- ============================================================
---  STEP 1 — LOOK FIRST. Run this on its own and read the output.
+--  STEP 1 — LOOK FIRST. Run this alone and read the output.
 -- ============================================================
 
--- Every challenge currently in the database
-select e.name,
-       e.start_at,
-       e.end_at,
-       e.status,
+-- Every challenge
+select e.name, e.start_at, e.end_at, e.status,
        (select count(*) from public.submissions s where s.event_id = e.id) as entries,
        e.id
 from public.events e
 order by e.created_at desc;
 
--- Every account currently in the database
-select p.devotee_id,
-       p.name,
-       u.email,
-       p.is_admin,
-       (select count(*) from public.submissions s where s.user_id = p.id) as entries
+-- Every account, with how many rounds it has offered
+select p.devotee_id, p.name, u.email, p.is_admin,
+       coalesce((select sum(s.rounds) from public.submissions s where s.user_id = p.id), 0) as rounds
 from public.profiles p
 join auth.users u on u.id = p.id
 order by p.devotee_id;
 
 
 -- ============================================================
---  STEP 2a — keep only the current challenge
+--  STEP 2 — remove the verification account
 --
---  Change the name below if yours is spelled differently. Copy it
---  exactly from the STEP 1 output. Deleting a challenge also
---  deletes the rounds submitted to it.
+--  Created while testing that new registrations work. Safe to delete.
 -- ============================================================
 
-delete from public.events
-where lower(trim(name)) <> lower(trim('Ekadashi Japa Yagna'));
-
--- Confirm one challenge remains
-select name, start_at, end_at, status from public.events;
+delete from auth.users where lower(email) = lower('zz-verify-delete-me@example.com');
 
 
 -- ============================================================
---  STEP 2b — remove test participants
+--  STEP 3 — remove a challenge you no longer want
 --
---  WARNING: this deletes EVERY account except the admin, together
---  with their profiles and any rounds they offered. Run it only if
---  the STEP 1 account list contains nothing but test accounts. If
---  a real devotee has already registered, delete accounts one at a
---  time with the single-account statement further down instead.
+--  Fill in the name exactly as STEP 1 printed it. Deleting a
+--  challenge also deletes the rounds offered to it, so check the
+--  "entries" column first.
 -- ============================================================
 
-delete from auth.users
-where lower(email) <> lower(public.admin_email());
-
--- Devotee IDs start again from HKMM001 for the next real signup.
--- (The admin keeps whatever ID they already have.)
-alter sequence public.devotee_seq restart with 1;
+-- delete from public.events where lower(trim(name)) = lower(trim('PUT THE NAME HERE'));
 
 
 -- ============================================================
---  Removing ONE account instead (safer alternative to STEP 2b)
+--  STEP 4 — remove one test account
+--
+--  One address at a time, on purpose. Do NOT bulk-delete: several
+--  genuine devotees have already signed up.
 -- ============================================================
+
 -- delete from auth.users where lower(email) = lower('someone@example.com');
 
 
 -- ============================================================
---  STEP 3 — check the result
+--  STEP 5 — check the result
 -- ============================================================
 
 select 'challenges' as kind, count(*) from public.events

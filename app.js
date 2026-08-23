@@ -245,9 +245,15 @@
       if (!el) {
         el = document.createElement('div');
         el.id = 'mode-banner';
+        $('#app').insertBefore(el, $('#content'));
+      }
+      if (store.degraded) {
+        // Configured but unreachable: never let local data pass for real.
+        el.className = 'mode-banner alarm';
+        el.textContent = 'Not connected to the temple database — nothing here is saved for others';
+      } else {
         el.className = 'mode-banner';
         el.textContent = 'Demo mode — rounds are saved only on this device';
-        $('#app').insertBefore(el, $('#content'));
       }
     } else if (el) { el.remove(); }
   }
