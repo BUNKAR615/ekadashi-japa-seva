@@ -360,8 +360,8 @@
           <div class="pct-big${pct >= 100 ? ' done' : ''}">${pct}%</div>
         </div>
         <div class="participants-line">${t.capacity
-          ? `${fmt(t.capacity)} devotees registered · ${fmt(t.participants)} have submitted`
-          : `${fmt(t.participants)} devotees have submitted`}</div>
+          ? `${fmt(t.capacity)} devotee${t.capacity === 1 ? '' : 's'} registered · ${fmt(t.participants)} submitted`
+          : `${fmt(t.participants)} devotee${t.participants === 1 ? '' : 's'} submitted`}</div>
         <div class="progress-track"><div class="progress-fill${pct >= 100 ? ' done' : ''}" style="width:${barPct}%"></div></div>
         <div class="progress-meta"><span>${pct}% of the goal completed</span><span>${fmt(ev.goal_rounds)} goal</span></div>
       </div>
@@ -580,7 +580,7 @@
         <span class="eyebrow">Participation</span>
         <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
         <div class="panel-meta">
-          <span>${ev ? `${fmt(t.participants)} of ${fmt(t.capacity)} devotees have submitted` : 'Waiting for the next challenge'}</span>
+          <span>${ev ? `${fmt(t.participants)} of ${fmt(t.capacity)} devotee${t.capacity === 1 ? '' : 's'} have submitted` : 'Waiting for the next challenge'}</span>
           <span>${ev ? pct + '%' : ''}</span>
         </div>
         <div class="btn-row">

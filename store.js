@@ -30,47 +30,25 @@
   // (admin_email() in supabase/schema.sql); this mirrors it for demo mode.
   const ADMIN_EMAIL = 'dineshbunkar533@gmail.com';
 
-  const OTHERS = [
-    { name: 'Rahul Vyas',     id: 'HKMM014', phone: '+91 98280 11402', rounds: 60, time: '17:31' },
-    { name: 'Amit Purohit',   id: 'HKMM008', phone: '+91 98290 55317', rounds: 48, time: '19:05' },
-    { name: 'Sanjay Bishnoi', id: 'HKMM021', phone: '+91 94140 78226', rounds: 42, time: '16:12' },
-    { name: 'Kunal Rathore',  id: 'HKMM003', phone: '+91 98875 30194', rounds: 36, time: '20:04' },
-    { name: 'Nikhil Joshi',   id: 'HKMM037', phone: '+91 96360 42871', rounds: 32, time: '15:48' },
-    { name: 'Vivek Suthar',   id: 'HKMM042', phone: '+91 97830 66508', rounds: 28, time: '21:10' },
-    { name: 'Harsh Solanki',  id: 'HKMM011', phone: '+91 99280 13645', rounds: 24, time: '13:26' }
-  ];
-  const UNNAMED_BASE = 2102;
-  const TOTAL_DEVOTEES = 87;
-  const OTHERS_SUBMITTED = 73;
+  // Demo mode carries no invented devotees or past challenges — it
+  // mirrors a fresh install so it can never be mistaken for real data.
+  const OTHERS = [];
+  const TOTAL_DEVOTEES = 0;
 
   function seedEvents() {
-    // Build a window: n days from today at the given hour, lasting `hours`.
-    const at = (dayOffset, hour, minute) => {
-      const d = new Date();
-      d.setDate(d.getDate() + dayOffset);
-      d.setHours(hour, minute, 0, 0);
-      return d.toISOString();
-    };
-    const base = { goal_rounds: 3000, visibility: 'names' };
-    return [
-      Object.assign({}, base, { id: 'e1', name: 'Ekadashi Japa Seva',
-        start_at: at(0, 4, 30), end_at: at(0, 21, 0), status: 'active',
-        description: 'Offer your chanting with devotion between Mangala Arti and Shayan Arti.' }),
-      Object.assign({}, base, { id: 'e2', name: 'Ekadashi Japa Seva',
-        start_at: at(14, 4, 30), end_at: at(14, 21, 0), status: 'upcoming', description: '' }),
-      Object.assign({}, base, { id: 'e3', name: 'Ekadashi Japa Seva',
-        start_at: at(-17, 4, 30), end_at: at(-17, 21, 0), status: 'closed',
-        description: '', baseRounds: 1908, baseParticipants: 68 }),
-      Object.assign({}, base, { id: 'e5', name: 'Ekadashi Japa Seva',
-        start_at: at(-32, 4, 30), end_at: at(-32, 21, 0), status: 'closed',
-        description: '', baseRounds: 1642, baseParticipants: 61 }),
-      Object.assign({}, base, { id: 'e0', name: 'Purushottama Japa Retreat',
-        start_at: at(-46, 4, 30), end_at: at(-40, 21, 0), status: 'closed',
-        description: '', baseRounds: 2204, baseParticipants: 70 }),
-      Object.assign({}, base, { id: 'e4', name: 'Janmashtami Maha-Japa',
-        start_at: at(18, 4, 30), end_at: at(19, 21, 0), status: 'draft', goal_rounds: 4000,
-        description: 'A special maha-japa offering for Sri Krishna Janmashtami.' })
-    ];
+    const now = new Date();
+    const start = new Date(now); start.setHours(4, 30, 0, 0);
+    const end = new Date(now);   end.setHours(21, 0, 0, 0);
+    return [{
+      id: 'e1',
+      name: 'Ekadashi Japa Yagna',
+      start_at: start.toISOString(),
+      end_at: end.toISOString(),
+      status: 'active',
+      goal_rounds: 3000,
+      visibility: 'names',
+      description: 'Offer your chanting with devotion.'
+    }];
   }
 
   function DemoStore() {
@@ -80,7 +58,7 @@
       s = {
         user: null,
         events: seedEvents(),
-        mySubmissions: { e3: { rounds: 32, time: '18:12' }, e5: { rounds: 24, time: '19:40' }, e0: { rounds: 48, time: '17:05' } }
+        mySubmissions: {}
       };
     }
     // Normalise states saved by older versions, and repair anything
@@ -168,22 +146,13 @@
         const e = ev(eventId);
         if (!e) return { total: 0, participants: 0, average: 0, highest: 0, capacity: 0 };
         const mine = (s.mySubmissions[eventId] || {}).rounds || 0;
-        if (e.status === 'closed' && e.baseRounds) {
-          const p = e.baseParticipants || 0;
-          return {
-            total: e.baseRounds, participants: p,
-            average: p ? +(e.baseRounds / p).toFixed(1) : 0,
-            highest: 64, capacity: TOTAL_DEVOTEES
-          };
-        }
-        const named = OTHERS.reduce((t, o) => t + o.rounds, 0);
-        const total = UNNAMED_BASE + named + mine;
-        const participants = OTHERS_SUBMITTED + (mine > 0 ? 1 : 0);
+        const total = mine;
+        const participants = mine > 0 ? 1 : 0;
         return {
           total, participants,
           average: participants ? +(total / participants).toFixed(1) : 0,
-          highest: Math.max(mine, ...OTHERS.map(o => o.rounds)),
-          capacity: TOTAL_DEVOTEES
+          highest: mine,
+          capacity: Math.max(TOTAL_DEVOTEES, s.user ? 1 : 0)
         };
       },
 
