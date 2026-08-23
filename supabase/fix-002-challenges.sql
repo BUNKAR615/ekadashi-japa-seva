@@ -216,3 +216,11 @@ set is_admin = (
 );
 
 grant execute on function public.admin_email() to authenticated;
+
+-- ============================================================
+--  7. GROUP NAME
+--  Every devotee belongs to the same group.
+-- ============================================================
+
+alter table public.profiles alter column group_name set default 'Jodhpur Folk';
+update public.profiles set group_name = 'Jodhpur Folk';
