@@ -143,6 +143,7 @@ button{cursor:pointer}
 .event-card{padding:22px 22px 24px;text-align:center}
 .event-top{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .event-title{font-weight:600;font-size:21px;letter-spacing:-.02em;margin:14px 0 2px;color:var(--ink)}
+.rounds-head{display:flex;align-items:center;justify-content:center;gap:10px}
 .rounds-label{font-size:12.5px;color:var(--muted)}
 .rounds-num{font-weight:300;font-size:88px;line-height:1.05;letter-spacing:-.04em;color:var(--ink)}
 .rounds-caption{font-size:12px;color:var(--muted);margin-bottom:18px}
@@ -343,13 +344,6 @@ button{cursor:pointer}
 .toast-card.err{border-color:rgba(192,57,43,.25)}
 .toast-card.err p{color:var(--danger);max-width:240px}
 
-/* Demo banner */
-.mode-banner{
-  flex:none;background:rgba(217,119,46,.1);border-bottom:1px solid rgba(217,119,46,.2);
-  color:#A8551C;font-size:10px;letter-spacing:.08em;text-transform:uppercase;
-  font-weight:500;text-align:center;padding:6px 12px;
-}
-
 /* Loading */
 .loading-overlay{position:absolute;inset:0;z-index:40;background:var(--paper);display:flex;align-items:center;justify-content:center}
 .loading-card{text-align:center;padding:34px 24px}
@@ -416,9 +410,26 @@ select.field{appearance:auto;-webkit-appearance:auto}
 .event-actions button.primary:active{background:#C56A26}
 
 
-/* Configured backend unreachable — must not be mistaken for normal */
-.mode-banner.alarm{
-  background:rgba(192,57,43,.12);
-  border-bottom-color:rgba(192,57,43,.35);
-  color:var(--danger);
+/* ---------- Edit your own entry ---------- */
+/* Offered only on the devotee's own row; the database enforces the
+   same rule, so this is a convenience, not the guard. */
+.edit-link{
+  border:1px solid var(--line);background:transparent;color:var(--saffron);
+  font-size:11px;font-weight:500;letter-spacing:.02em;
+  padding:4px 11px;border-radius:999px;line-height:1.4;
 }
+.edit-link:active{background:rgba(217,119,46,.1)}
+.edit-link.row{flex:none;margin-left:2px}
+.edit-link.tl{margin-top:7px;padding:3px 10px;font-size:10.5px}
+
+/* "Chanted more?" quick add inside the rounds sheet */
+.add-row{display:flex;align-items:center;gap:7px;margin:0 0 14px;flex-wrap:wrap}
+.add-label{font-size:11px;color:var(--muted);margin-right:2px}
+.add-chip{
+  border:0;background:var(--paper);color:var(--ink);
+  font-size:13px;font-weight:500;padding:7px 14px;border-radius:999px;
+}
+.add-chip:active{transform:scale(.96);background:rgba(217,119,46,.12);color:var(--saffron)}
+
+/* Retry action on the load-failure card */
+.no-event-card .btn-primary{display:block;max-width:220px;margin:20px auto 0}

@@ -11,7 +11,10 @@
 
    NEVER put the service_role / secret key here; it bypasses all security.
 
-   Blank these out to fall back to demo mode (data saved per browser).
+   These keys are required. Without them the app has nowhere to save
+   rounds and says so on the sign-in screen rather than falling back to
+   browser-only storage, which would hide every devotee's offering from
+   the rest of the temple.
    ============================================================ */
 
 window.JAPA_CONFIG = {

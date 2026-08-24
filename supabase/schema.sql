@@ -53,6 +53,23 @@ create index if not exists submissions_event_idx on public.submissions (event_id
 create index if not exists events_status_idx     on public.events (status);
 create index if not exists events_window_idx     on public.events (start_at, end_at);
 
+-- A revision always stamps the moment it happened, even if a client
+-- ever forgets to send it.
+create or replace function public.touch_submission()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists submissions_touch on public.submissions;
+create trigger submissions_touch
+  before insert or update on public.submissions
+  for each row execute function public.touch_submission();
+
 -- Only one event may be live at a time.
 create unique index if not exists events_single_active_idx
   on public.events ((status)) where status = 'active';
@@ -269,6 +286,11 @@ revoke select, update, insert, delete on public.profiles from authenticated;
 grant select (id, name, devotee_id, group_name, is_admin, created_at)
   on public.profiles to authenticated;
 grant update (name, phone, group_name) on public.profiles to authenticated;
+
+-- Reads and writes on the two data tables are shaped by the policies
+-- above, so the table grants stay whole.
+grant select, insert, update, delete on public.events      to authenticated;
+grant select, insert, update, delete on public.submissions to authenticated;
 
 grant execute on function public.event_totals(uuid) to authenticated;
 grant execute on function public.admin_devotees() to authenticated;

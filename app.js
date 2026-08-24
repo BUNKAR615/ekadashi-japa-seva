@@ -2,7 +2,8 @@
    Ekadashi Japa Seva — Hare Krishna Marwad Mandir
 
    All data access goes through window.JapaStore (see store.js), which
-   is either the Supabase backend or the localStorage demo store.
+   talks to the temple's Supabase database. Rounds are written there and
+   read back from there — never kept only in this browser.
    ============================================================ */
 (function () {
   'use strict';
@@ -16,8 +17,10 @@
     user: null, events: [],
     event: null,                 // the one current challenge (active, else last closed)
     mine: 0,
+    myUpdatedAt: null,           // when this devotee last revised their count
     totals: { total: 0, participants: 0, average: 0, highest: 0, capacity: 0 },
-    leaders: [], activeLeaders: [], devotees: [], history: []
+    leaders: [], activeLeaders: [], devotees: [], history: [],
+    loadError: null              // set when the database could not be read
   };
 
   const ui = {
@@ -97,14 +100,16 @@
     data.event = ev;
 
     if (ev) {
-      const [mine, totals] = await Promise.all([
-        store.myRounds(ev.id),
+      const [entry, totals] = await Promise.all([
+        store.myEntry(ev.id),
         store.eventTotals(ev.id)
       ]);
-      data.mine = mine;
+      data.mine = entry ? entry.rounds : 0;
+      data.myUpdatedAt = entry ? entry.updatedAt : null;
       data.totals = totals;
     } else {
       data.mine = 0;
+      data.myUpdatedAt = null;
       data.totals = { total: 0, participants: 0, average: 0, highest: 0, capacity: 0 };
     }
 
@@ -136,13 +141,27 @@
     ui.busy = true;
     try {
       await refresh();
+      data.loadError = null;
       render();
     } catch (e) {
       console.error(e);
-      showError(e.message || 'Something went wrong. Please try again.');
+      const msg = e.message || 'Something went wrong. Please try again.';
+      // With nothing on screen yet, a toast would vanish and leave an
+      // empty app that looks like "no challenge". Show the reason and
+      // a way to retry instead.
+      if (!data.event) { data.loadError = msg; render(); }
+      else { showError(msg); }
     } finally {
       ui.busy = false;
     }
+  }
+
+  // Retry after a failed load, with the spinner while it runs.
+  async function retryLoad() {
+    data.loadError = null;
+    $('#loading').classList.remove('hidden');
+    try { await reload(); }
+    finally { $('#loading').classList.add('hidden'); }
   }
 
   /* ---------- Auth ---------- */
@@ -210,7 +229,15 @@
 
   async function enterApp() {
     $('#loading').classList.remove('hidden');
-    try { await refresh(); } catch (e) { console.error(e); }
+    data.loadError = null;
+    try {
+      await refresh();
+    } catch (e) {
+      // A failed first load used to be swallowed, which showed an empty
+      // app as though the temple simply had no challenge running.
+      console.error(e);
+      data.loadError = e.message || 'Could not load the temple database. Please try again.';
+    }
     $('#welcome').classList.add('hidden');
     $('#app').classList.remove('hidden');
     $('#loading').classList.add('hidden');
@@ -236,26 +263,6 @@
     renderHeader();
     renderTabs();
     renderContent();
-    renderModeBanner();
-  }
-
-  function renderModeBanner() {
-    let el = $('#mode-banner');
-    if (store.isDemo) {
-      if (!el) {
-        el = document.createElement('div');
-        el.id = 'mode-banner';
-        $('#app').insertBefore(el, $('#content'));
-      }
-      if (store.degraded) {
-        // Configured but unreachable: never let local data pass for real.
-        el.className = 'mode-banner alarm';
-        el.textContent = 'Not connected to the temple database — nothing here is saved for others';
-      } else {
-        el.className = 'mode-banner';
-        el.textContent = 'Demo mode — rounds are saved only on this device';
-      }
-    } else if (el) { el.remove(); }
   }
 
   function renderHeader() {
@@ -285,8 +292,20 @@
       </button>`).join('');
   }
 
+  function viewLoadError() {
+    return `<div class="pad">
+      <div class="card no-event-card">
+        <p class="big">Could not load from the temple database</p>
+        <p class="small">${esc(data.loadError)}</p>
+        <button type="button" class="btn-primary" data-action="retry-load">Try again</button>
+      </div>
+      ${quoteCard()}${mantraBlock()}
+    </div>`;
+  }
+
   function renderContent() {
     const c = $('#content');
+    if (data.loadError) { c.innerHTML = viewLoadError(); c.scrollTop = 0; return; }
     switch (ui.tab) {
       case 'japa':      c.innerHTML = viewJapa(); break;
       case 'together':  c.innerHTML = viewTogether(); break;
@@ -341,13 +360,19 @@
         </div>
         ${ended ? '<div class="completed-banner">Challenge completed</div>' : ''}
         <h2 class="event-title">${esc(ev.name)}</h2>
-        <div class="rounds-label">Your rounds</div>
+        <div class="rounds-head">
+          <span class="rounds-label">Your rounds</span>
+          ${rounds > 0 && open
+            ? '<button type="button" class="edit-link" data-action="edit-rounds">Edit</button>'
+            : ''}
+        </div>
         <div class="rounds-num">${rounds}</div>
         <div class="rounds-caption">${rounds === 0
           ? 'Not recorded yet'
-          : `${fmt(rounds * NAMES_PER_ROUND)} holy names`}</div>
+          : `${fmt(rounds * NAMES_PER_ROUND)} holy names${
+              data.myUpdatedAt ? ` · saved ${esc(fmtTime(data.myUpdatedAt))}` : ''}`}</div>
         <button type="button" class="cta ${open ? 'live' : 'dead'}" data-action="open-sheet">
-          ${ended ? 'Challenge completed' : notStarted ? 'Not started yet' : (rounds === 0 ? 'Record my rounds' : 'Update Rounds')}
+          ${ended ? 'Challenge completed' : notStarted ? 'Not started yet' : (rounds === 0 ? 'Record my rounds' : 'Edit my rounds')}
         </button>
         <div class="cta-hint">${
           ended ? `Ended ${esc(fmtStamp(ev.end_at))}`
@@ -447,6 +472,9 @@
         <p class="big">No rounds recorded yet</p>
         <p class="small">Be the first to offer your chanting.</p></div>`;
     } else {
+      // Only the devotee's own row offers Edit, and only while the
+      // window is open. The database enforces the same rule.
+      const canEdit = isOpen(ev);
       board = `<div class="list-card">
         ${people.map((p, i) => `
           <div class="board-row${p.me ? ' me' : ''}">
@@ -458,6 +486,9 @@
                 : (p.me ? 'You · ' + esc(p.devoteeId) : esc(p.devoteeId))}</div>
             </div>
             <div class="cnt">${p.total}</div>
+            ${p.me && canEdit
+              ? '<button type="button" class="edit-link row" data-action="edit-rounds">Edit</button>'
+              : ''}
           </div>`).join('')}
       </div>
       <p class="board-note">Not a competition — a shared offering.<br>${
@@ -488,11 +519,13 @@
         <div class="list-card">
           ${items.map(h => {
             const isToday = active && h.eventId === active.id;
+            const canEdit = isToday && isOpen(active);
             return `<div class="tl-row">
               <div class="who">
                 <div class="tl-date">${esc(fmtDateShort(h.date))}</div>
                 <div class="tl-title">${esc(h.name)}</div>
                 <div class="tl-note">${isToday ? 'In progress · updated at ' + esc(h.time) : 'Recorded at ' + esc(h.time)}</div>
+                ${canEdit ? '<button type="button" class="edit-link tl" data-action="edit-rounds">Edit rounds</button>' : ''}
               </div>
               <div style="flex:none">
                 <div class="tl-rounds">${h.rounds}</div>
@@ -723,13 +756,26 @@
     updateDraftBox();
   }
 
+  // "Chanted more?" — the chips work from the running total, so four
+  // more rounds on top of eight saves twelve.
+  function addRounds(n) {
+    const base = ui.draft === '' ? data.mine : (parseInt(ui.draft, 10) || 0);
+    const next = base + n;
+    ui.capped = next > MAX_ROUNDS;
+    ui.draft = String(Math.min(MAX_ROUNDS, next));
+    updateDraftBox();
+  }
+
   function updateDraftBox() {
     const num = $('#draft-num'), hint = $('#draft-hint');
     if (!num) return;
+    const editing = data.mine > 0;
     num.textContent = ui.draft === '' ? String(data.mine) : ui.draft;
     num.style.color = ui.draft === '' ? '#B3ACA1' : '#221F1B';
     hint.textContent = ui.capped ? `Maximum ${MAX_ROUNDS} rounds`
-      : (ui.draft === '' ? 'Currently recorded — type to replace' : 'Rounds');
+      : ui.draft === ''
+        ? (editing ? 'Recorded now — type the new total' : 'Currently recorded — type to replace')
+        : (editing ? `New total — was ${data.mine}` : 'Rounds');
     hint.style.color = ui.capped ? '#C0392B' : '#B3ACA1';
   }
 
@@ -737,18 +783,30 @@
     const ev = activeEvent();
     if (!ev || ui.draft === '') { closeOverlay(); return; }
     if (!isOpen(ev)) { closeOverlay(); showError('This challenge is not open right now.'); return; }
-    const val = Math.min(MAX_ROUNDS, parseInt(ui.draft, 10) || 0);
+
+    // A whole number from 0 to MAX_ROUNDS. The keypad cannot produce
+    // anything else, but the value is checked here as well as in the
+    // store and in the database.
+    const val = parseInt(ui.draft, 10);
+    if (!Number.isInteger(val) || val < 0 || val > MAX_ROUNDS) {
+      showError(`Please enter a whole number between 0 and ${MAX_ROUNDS}.`);
+      return;
+    }
+
     const first = data.mine === 0;
     const btn = $('[data-action="save-rounds"]');
+    const label = btn ? btn.textContent : 'Save Rounds';
     if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
     try {
-      await store.saveRounds(ev.id, val);
+      // The store returns the row the database stored, so the message
+      // reports what was actually persisted rather than what was typed.
+      const saved = await store.saveRounds(ev.id, val);
       closeOverlay();
       await reload();
       toast(first ? 'Hare Krishna! Your chanting has been recorded.'
-                  : `Rounds updated — ${val} offered.`);
+                  : `Rounds updated — ${saved ? saved.rounds : val} offered.`);
     } catch (e) {
-      if (btn) { btn.disabled = false; btn.textContent = 'Save Rounds'; }
+      if (btn) { btn.disabled = false; btn.textContent = label; }
       showError(e.message);
     }
   }
@@ -832,23 +890,36 @@
 
     if (ui.sheet === 'rounds') {
       const ev = activeEvent();
+      if (!ev) { root.innerHTML = ''; return; }
       const keyDefs = ['1','2','3','4','5','6','7','8','9','clr','0','del'];
+      const editing = data.mine > 0;
+      // Chanting a few more rounds is the common case, so offer it
+      // directly: each chip sets the new total, which is what gets saved.
+      const addChips = [1, 2, 4, 8].filter(n => data.mine + n <= MAX_ROUNDS);
       root.innerHTML = `<div class="overlay">
         <div class="scrim" data-action="close-overlay"></div>
         <div class="sheet">
           <div class="grabber"></div>
-          <h3 style="text-align:center">How many rounds today?</h3>
-          <p class="sheet-sub">You can update this any time until ${esc(fmtStamp(ev.end_at))}</p>
+          <h3 style="text-align:center">${editing ? 'Update your rounds' : 'How many rounds today?'}</h3>
+          <p class="sheet-sub">${editing
+            ? `${data.mine} recorded so far — set your new total. Editable until ${esc(fmtStamp(ev.end_at))}`
+            : `You can update this any time until ${esc(fmtStamp(ev.end_at))}`}</p>
           <div class="draft-box">
             <div class="draft-num" id="draft-num" style="color:#B3ACA1">${data.mine}</div>
-            <div class="draft-hint" id="draft-hint" style="color:#B3ACA1">Currently recorded — type to replace</div>
+            <div class="draft-hint" id="draft-hint" style="color:#B3ACA1">${editing
+              ? 'Recorded now — type the new total'
+              : 'Currently recorded — type to replace'}</div>
           </div>
+          ${editing && addChips.length ? `<div class="add-row">
+            <span class="add-label">Chanted more?</span>
+            ${addChips.map(n => `<button type="button" class="add-chip" data-add="${n}">+${n}</button>`).join('')}
+          </div>` : ''}
           <div class="keypad">
             ${keyDefs.map(k => `<button type="button"
               class="key${k === 'clr' || k === 'del' ? ' fn' : ''}${k === 'del' ? ' del' : ''}"
               data-key="${k}">${k === 'del' ? '⌫' : k === 'clr' ? 'Clear' : k}</button>`).join('')}
           </div>
-          <button type="button" class="btn-primary" data-action="save-rounds">Save Rounds</button>
+          <button type="button" class="btn-primary" data-action="save-rounds">${editing ? 'Save Changes' : 'Save Rounds'}</button>
           <button type="button" class="btn-cancel" data-action="close-overlay">Cancel</button>
         </div>
       </div>`;
@@ -947,7 +1018,7 @@
   /* ---------- Events ---------- */
 
   document.addEventListener('click', async ev => {
-    const t = ev.target.closest('[data-action],[data-tab],[data-adminsec],[data-key],.vis-option');
+    const t = ev.target.closest('[data-action],[data-tab],[data-adminsec],[data-key],[data-add],.vis-option');
     if (!t) return;
 
     if (t.dataset.adminsec) {
@@ -963,13 +1034,16 @@
       return;
     }
     if (t.dataset.key) { pressKey(t.dataset.key); return; }
+    if (t.dataset.add) { addRounds(parseInt(t.dataset.add, 10) || 0); return; }
     if (t.classList.contains('vis-option')) {
       document.querySelectorAll('.vis-option').forEach(o => o.classList.toggle('on', o === t));
       return;
     }
 
     switch (t.dataset.action) {
-      case 'open-sheet':        openRoundsSheet(); break;
+      case 'open-sheet':
+      case 'edit-rounds':       openRoundsSheet(); break;
+      case 'retry-load':        await retryLoad(); break;
       case 'close-overlay':     closeOverlay(); break;
       case 'save-rounds':       await saveRounds(); break;
       case 'goto-together':     ev.preventDefault(); ui.tab = 'together'; render(); break;
@@ -987,7 +1061,16 @@
   /* ---------- Boot ---------- */
 
   (async function boot() {
-    store = await window.JapaStore.create();
+    try {
+      store = await window.JapaStore.create();
+    } catch (e) {
+      // Without the temple database there is nothing to sign in to.
+      // Say why on the sign-in card instead of failing silently.
+      console.error(e);
+      $('#auth-submit').disabled = true;
+      authMsg(e.message || 'The temple database could not be reached.');
+      return;
+    }
     initAuth();
     try {
       const user = await store.currentUser();

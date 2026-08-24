@@ -6,17 +6,19 @@ events. Implemented from the Claude Design project *Japa Seva* (clean pass).
 
 **Live:** https://japa-seva.vercel.app
 
-## Two modes
+## Where the data lives
 
-The app runs in one of two modes, chosen automatically at startup:
+Every round is written to the temple's Supabase database and read back from
+there. Nothing is kept only in the browser, so a refresh, a sign-out, or a
+different phone all show the same figures, and admins see every entry.
 
-| Mode | When | Behaviour |
-|------|------|-----------|
-| **Demo** | `config.js` has no keys | Everything works, but data is saved only in that browser. A banner says so. |
-| **Live** | `config.js` has Supabase keys | Real accounts, shared data, real admin permissions. |
+There is **no automatic fallback to local storage**. An earlier version quietly
+switched to a browser-only store whenever the backend hiccuped, which turned
+each devotee's rounds into private data nobody else could see. If the database
+cannot be reached the app now says so and offers to retry.
 
-This means the site never breaks — it degrades to demo mode if the backend is
-missing or unreachable.
+A localStorage-only mode still exists for development, reachable only by adding
+`?demo=1` to the address. It is never chosen automatically.
 
 ## Connecting the backend (one-time setup)
 
@@ -25,9 +27,15 @@ the free tier is ample. Choose a region close to India (Mumbai / Singapore).
 
 **2. Run the schema.** In the dashboard open **SQL Editor**, paste the whole of
 [`supabase/schema.sql`](supabase/schema.sql), and run it. It creates the tables,
-the security policies, and one active event to start with. (Projects created
-before challenge management existed run
-[`supabase/fix-002-challenges.sql`](supabase/fix-002-challenges.sql) instead.)
+the security policies, and one active event to start with.
+
+**Already have a project from an earlier version?** Run
+[`supabase/fix-003-persistence.sql`](supabase/fix-003-persistence.sql) instead —
+one file, safe to re-run, and safe on a project that is already current. It
+supersedes fix-001 and fix-002. Until it has been run, the app cannot save
+rounds at all: the first schema stored a challenge as a date plus two clock-time
+strings, and every query the app now makes asks for `start_at` / `end_at`, so
+PostgREST rejects it with `42703 column events.start_at does not exist`.
 
 **3. Paste your keys** into [`config.js`](config.js):
 
@@ -75,9 +83,17 @@ so they hold even if someone edits the page in their browser:
   database refuses to return other devotees' rows for such an event. Group
   totals still work, because they come from an aggregate function that returns
   sums only — never an individual's figure.
-- Rounds are constrained to 0–216 per day in the schema, matching the keypad.
-- Promoting or demoting admins happens through a guarded database function;
-  the last remaining admin can never be demoted.
+- Rounds are constrained to a whole number from 0 to 216 by a check
+  constraint, matching the keypad. The same rule is applied in the interface
+  and in the data layer, so a bad value is refused three times over.
+- **A devotee can edit only their own entry.** The update policy matches on
+  `user_id = auth.uid()`, so an attempt to revise someone else's count changes
+  nothing — even with the interface bypassed.
+- Editing never creates a second row: submissions are unique on
+  `(event_id, user_id)` and the app upserts on that key, so a revision updates
+  the existing record and stamps `updated_at`.
+- Admin is pinned to one email address by a trigger; nobody can be promoted
+  from inside the app.
 
 ## What's inside
 
@@ -89,7 +105,8 @@ so they hold even if someone edits the page in their browser:
 | `store.js` | Data layer — the Supabase and demo implementations behind one async API |
 | `config.js` | Your Supabase keys (blank = demo mode) |
 | `supabase/schema.sql` | Tables, policies and functions; run once in the SQL Editor |
-| `supabase/fix-002-challenges.sql` | Migration for projects created before challenge windows existed |
+| `supabase/fix-003-persistence.sql` | **Run this on an existing project.** One idempotent migration to the current schema; supersedes fix-001 and fix-002 |
+| `supabase/fix-002-challenges.sql` | Superseded by fix-003; kept for reference |
 | `manifest.webmanifest` | Installable-app metadata — devotees can add it to their home screen |
 | `assets/` | Temple logo, Srila Prabhupada portrait, and generated app icons |
 
@@ -103,6 +120,14 @@ keeps a single running total for that window, editable until it closes.
 capped at 216, lotus toast on save), Leaderboard (percentage of the goal
 completed, group stats, and the leaders ranked by total rounds), and Me
 (profile, challenge history, sign out).
+
+**Revising your count.** Chanting more rounds later is the normal case, not an
+exception. An **Edit** control sits on the Japa card, on your own leaderboard
+row, and on the challenge in My Journey — on your own entry only. The sheet
+opens showing what is already recorded, with *Chanted more?* chips (+1 +2 +4 +8)
+that add to the running total, so eight rounds plus four saves twelve. The
+existing database row is updated in place, `updated_at` is re-stamped, and the
+new figure appears on the leaderboard and in the group total immediately.
 
 **Admins keep every devotee ability** and gain a fourth tab. There is no mode
 switch: an admin records their own rounds and appears on the leaderboard like

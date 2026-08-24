@@ -3,14 +3,20 @@
 
    Exposes one async API (window.JapaStore) with two implementations:
 
-     SupabaseStore — real shared backend, used when config.js has keys
-     DemoStore     — localStorage only, used otherwise
+     SupabaseStore — the temple database. Used whenever config.js has
+                     keys, which is always in the deployed app.
+     DemoStore     — localStorage, reachable ONLY by adding ?demo=1 to
+                     the address. A deliberate developer opt-in.
 
-   The app talks to this module and never to Supabase directly, so the
-   two modes stay interchangeable.
+   There is no automatic fallback between them. If the database is
+   unreachable the app says so and offers to retry; it never quietly
+   keeps rounds in the browser, because rounds kept there are invisible
+   to the rest of the temple and to admins.
 
    A challenge is one continuous window (start_at → end_at). Each
-   devotee keeps a single running total for that window.
+   devotee keeps a single running total for that window, held in one
+   submissions row keyed on (event_id, user_id) — so revising a count
+   updates that row rather than adding another.
    ============================================================ */
 (function () {
   'use strict';
@@ -21,6 +27,19 @@
     const d = new Date(iso);
     return isNaN(d) ? '' : d.toTimeString().slice(0, 5);
   };
+
+  // A count of rounds is a whole number from 0 to MAX_ROUNDS. Anything
+  // else — text, a negative, a fraction, Infinity — is refused here
+  // rather than being quietly rounded into something the devotee did
+  // not mean. The same rule is a check constraint in the database.
+  function normaliseRounds(value) {
+    const n = typeof value === 'number' ? value : parseInt(String(value).trim(), 10);
+    if (!Number.isFinite(n)) throw new Error('Please enter the number of rounds.');
+    if (n < 0)               throw new Error('Rounds cannot be a negative number.');
+    if (!Number.isInteger(n)) throw new Error('Please enter a whole number of rounds.');
+    if (n > MAX_ROUNDS)      throw new Error(`The most that can be recorded is ${MAX_ROUNDS} rounds.`);
+    return n;
+  }
 
   /* ================= Demo (localStorage) ================= */
 
@@ -132,14 +151,23 @@
 
       async listEvents() { return s.events.slice(); },
 
+      async myEntry(eventId) {
+        const sub = s.mySubmissions[eventId];
+        return sub ? { id: eventId, rounds: sub.rounds, updatedAt: sub.updatedAt || null } : null;
+      },
+
       async myRounds(eventId) {
         const sub = s.mySubmissions[eventId];
         return sub ? sub.rounds : 0;
       },
 
       async saveRounds(eventId, rounds) {
-        s.mySubmissions[eventId] = { rounds: Math.min(MAX_ROUNDS, rounds), time: now() };
+        const value = normaliseRounds(rounds);
+        s.mySubmissions[eventId] = {
+          rounds: value, time: now(), updatedAt: new Date().toISOString()
+        };
         save();
+        return { id: eventId, rounds: value, updatedAt: s.mySubmissions[eventId].updatedAt };
       },
 
       async eventTotals(eventId) {
@@ -275,39 +303,54 @@
           .from('events')
           .select('*')
           .order('start_at', { ascending: false });
-        if (error) throw error;
-        return data.map(mapEvent);
+        if (error) throw new Error(readMsg(error));
+        return (data || []).map(mapEvent);
       },
 
-      // This devotee's running total for the challenge.
-      async myRounds(eventId) {
+      // This devotee's own row for the challenge, or null if they have
+      // not offered anything yet.
+      async myEntry(eventId) {
         const me = await this.currentUser();
-        if (!me) return 0;
+        if (!me) return null;
         const { data, error } = await sb
           .from('submissions')
-          .select('rounds')
+          .select('id,rounds,updated_at')
           .eq('event_id', eventId)
           .eq('user_id', me.id)
           .maybeSingle();
         if (error) throw error;
-        return data ? data.rounds : 0;
+        return data ? { id: data.id, rounds: data.rounds, updatedAt: data.updated_at } : null;
       },
 
+      // This devotee's running total for the challenge.
+      async myRounds(eventId) {
+        const entry = await this.myEntry(eventId);
+        return entry ? entry.rounds : 0;
+      },
+
+      // Creating and revising are the same operation: the row is keyed
+      // on (event_id, user_id), so an edit updates that one record in
+      // place and can never leave a duplicate behind. Returns the row
+      // the database actually stored, so the interface shows the saved
+      // figure rather than the one that was typed.
       async saveRounds(eventId, rounds) {
         const me = await this.currentUser();
         if (!me) throw new Error('Please sign in again.');
-        const { error } = await sb.from('submissions').upsert({
+        const value = normaliseRounds(rounds);
+
+        const { data, error } = await sb.from('submissions').upsert({
           event_id: eventId,
+          // Pinned to the signed-in devotee. Row level security refuses
+          // any other value, so one devotee cannot edit another's entry.
           user_id: me.id,
-          rounds: Math.min(MAX_ROUNDS, rounds),
+          rounds: value,
           updated_at: new Date().toISOString()
-        }, { onConflict: 'event_id,user_id' });
-        if (error) {
-          // RLS rejects writes outside the challenge window.
-          throw new Error(/row-level security/i.test(error.message)
-            ? 'This challenge is not open right now, so rounds cannot be changed.'
-            : error.message);
-        }
+        }, { onConflict: 'event_id,user_id' })
+          .select('id,rounds,updated_at')
+          .single();
+
+        if (error) throw new Error(saveMsg(error));
+        return { id: data.id, rounds: data.rounds, updatedAt: data.updated_at };
       },
 
       async eventTotals(eventId) {
@@ -422,6 +465,38 @@
         ? 'Only temple admins can change events.'
         : error.message;
     }
+    // A project that has not had supabase/fix-003-persistence.sql run
+    // against it still has the first-generation columns, and every read
+    // fails with 42703. Name the cure rather than the Postgres error.
+    function needsMigration(m) {
+      return /column .*\b(start_at|end_at)\b.* does not exist/i.test(m)
+          || /42703/.test(m)
+          || /schema cache/i.test(m);
+    }
+    function readMsg(error) {
+      const m = error.message || '';
+      if (needsMigration(m)) {
+        return 'The temple database needs its latest update. Run supabase/fix-003-persistence.sql in the Supabase SQL Editor, then reload.';
+      }
+      if (/Failed to fetch|NetworkError/i.test(m)) {
+        return 'Could not reach the temple database. Please check your connection and try again.';
+      }
+      return m || 'The temple database did not respond. Please try again.';
+    }
+    function saveMsg(error) {
+      const m = error.message || '';
+      // RLS rejects writes outside the challenge window, and any attempt
+      // to write against another devotee's user_id.
+      if (/row-level security/i.test(m))        return 'This challenge is not open right now, so rounds cannot be changed.';
+      if (/violates check constraint/i.test(m)) return `Please enter a whole number between 0 and ${MAX_ROUNDS}.`;
+      if (needsMigration(m)) {
+        return 'The temple database needs its latest update before rounds can be saved. Run supabase/fix-003-persistence.sql in the Supabase SQL Editor.';
+      }
+      if (/Failed to fetch|NetworkError/i.test(m)) {
+        return 'Your rounds were not saved — the temple database could not be reached. Please try again.';
+      }
+      return m || 'Your rounds could not be saved. Please try again.';
+    }
     function friendly(msg) {
       if (/Invalid login credentials/i.test(msg)) return 'That email and password do not match an account.';
       if (/User already registered/i.test(msg))   return 'An account with this email already exists — please sign in.';
@@ -433,30 +508,35 @@
   /* ================= Selection ================= */
 
   window.JapaStore = {
+    // When the temple database is configured, it is the only store. An
+    // earlier version fell back to localStorage whenever the backend
+    // hiccuped, which quietly turned every devotee's rounds into private
+    // browser data that nobody else — not even an admin — could see.
+    // A real failure is now reported where it happens instead.
     async create() {
       const cfg = window.JAPA_CONFIG || {};
-      const forceDemo = /[?&]demo=1/.test(location.search);
-      const configured = !!(cfg.supabaseUrl && cfg.supabaseAnonKey && window.supabase);
 
-      if (!forceDemo && configured) {
-        try {
-          const client = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
-          const store = SupabaseStore(client);
-          await store.listEvents();   // fail fast if the project is unreachable
-          return store;
-        } catch (e) {
-          // The backend is configured but not answering correctly — usually a
-          // migration that has not been run. Falling back silently would show
-          // local data as though it were the temple's, so say so loudly
-          // instead: the store still works, but it is flagged as degraded.
-          console.error('Cannot reach the temple database:', e.message);
-          const store = DemoStore();
-          store.degraded = true;
-          store.degradedReason = e.message || 'The temple database did not respond as expected.';
-          return store;
-        }
+      // ?demo=1 is a deliberate developer opt-in, never automatic.
+      if (/[?&]demo=1/.test(location.search)) return DemoStore();
+
+      if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) {
+        throw new Error('The temple database is not configured yet. Add the Supabase project URL and publishable key to config.js.');
       }
-      return DemoStore();
+      if (!window.supabase) {
+        throw new Error('Could not load the database library. Please check your internet connection and reload.');
+      }
+
+      const client = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
+        auth: {
+          // The session lives in this browser so a reload or a return
+          // visit keeps the devotee signed in; the rounds themselves
+          // always live in Postgres.
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true
+        }
+      });
+      return SupabaseStore(client);
     },
     MAX_ROUNDS
   };
