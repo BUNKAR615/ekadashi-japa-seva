@@ -16,7 +16,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Tiro+Devanagari+Sanskrit&display=swap" rel="stylesheet">
 <!-- ?v= is bumped on every release so phones never run a stale cached copy -->
-<link rel="stylesheet" href="styles.css?v=18">
+<link rel="stylesheet" href="styles.css?v=19">
 </head>
 <body>
 <div id="frame">
@@ -30,18 +30,46 @@
       </div>
       <h1 class="welcome-title">Ekadashi Japa Seva</h1>
 
-      <form id="auth-form" class="auth-card" autocomplete="off">
+      <!-- One card, six states: sign in, create account, forgot password,
+           recover an address that already has an account, "check your
+           email", and choosing a new password after following the link.
+           app.js shows the fields each state needs. Nothing here is
+           marked required, because a hidden required field would block
+           the form; every state validates its own fields in script. -->
+      <form id="auth-form" class="auth-card" autocomplete="on">
+        <h2 class="auth-heading" id="auth-heading">Welcome back</h2>
+        <p class="auth-sub" id="auth-sub">Sign in with your email and password.</p>
+
+        <p class="auth-note hidden" id="auth-note"></p>
+
         <div id="auth-name-block" class="hidden">
           <label class="field-label" for="auth-name">Full name</label>
-          <input class="field" id="auth-name" type="text" placeholder="Your name">
+          <input class="field" id="auth-name" type="text" name="name"
+                 autocomplete="name" placeholder="Your name">
         </div>
-        <label class="field-label" for="auth-email">Email</label>
-        <input class="field" id="auth-email" type="email" placeholder="dinesh@example.com" required>
-        <label class="field-label" for="auth-pass">Password</label>
-        <input class="field" id="auth-pass" type="password" placeholder="••••••••" required>
+
+        <div id="auth-email-block">
+          <label class="field-label" for="auth-email">Email</label>
+          <input class="field" id="auth-email" type="email" name="email"
+                 autocomplete="email" inputmode="email" autocapitalize="none"
+                 autocorrect="off" spellcheck="false" placeholder="dinesh@example.com">
+        </div>
+
+        <div id="auth-pass-block">
+          <label class="field-label" for="auth-pass" id="auth-pass-label">Password</label>
+          <input class="field" id="auth-pass" type="password" name="password"
+                 autocomplete="current-password" placeholder="••••••••">
+        </div>
+
+        <div id="auth-pass2-block" class="hidden">
+          <label class="field-label" for="auth-pass2">Confirm new password</label>
+          <input class="field" id="auth-pass2" type="password"
+                 autocomplete="new-password" placeholder="••••••••">
+        </div>
+
         <p id="auth-error" class="auth-error hidden"></p>
         <button type="submit" class="btn-primary" id="auth-submit">Sign In</button>
-        <p class="auth-switch" id="auth-switch">New here? <a href="#" id="auth-toggle">Create Account</a></p>
+        <p class="auth-switch" id="auth-switch"></p>
       </form>
 
       <p class="welcome-footer">Chant Hare Krishna and Be Happy</p>
@@ -70,8 +98,8 @@
 
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="config.js?v=18"></script>
-<script src="store.js?v=18"></script>
-<script src="app.js?v=18"></script>
+<script src="config.js?v=19"></script>
+<script src="store.js?v=19"></script>
+<script src="app.js?v=19"></script>
 </body>
 </html>

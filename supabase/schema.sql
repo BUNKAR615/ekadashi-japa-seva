@@ -135,10 +135,14 @@ as $$
   where event_id = p_event and rounds > 0;
 $$;
 
--- Admin-only devotee directory (includes phone numbers).
-create or replace function public.admin_devotees()
+-- Admin-only devotee directory (includes email addresses and phone
+-- numbers). Two devotees may share a name; the address is what tells
+-- their accounts apart, so it is listed here. The body returns nothing
+-- at all unless the caller is the admin.
+drop function if exists public.admin_devotees();
+create function public.admin_devotees()
 returns table (
-  id uuid, name text, devotee_id text, phone text,
+  id uuid, name text, devotee_id text, email text, phone text,
   group_name text, is_admin boolean, created_at timestamptz
 )
 language sql
@@ -146,10 +150,70 @@ security definer
 stable
 set search_path = public
 as $$
-  select p.id, p.name, p.devotee_id, p.phone, p.group_name, p.is_admin, p.created_at
+  select p.id, p.name, p.devotee_id, u.email::text, p.phone,
+         p.group_name, p.is_admin, p.created_at
   from public.profiles p
+  left join auth.users u on u.id = p.id
   where public.is_admin()
   order by p.devotee_id;
+$$;
+
+-- ---------- Every account has exactly one profile ----------
+-- The profile is normally made by handle_new_user above. This is the
+-- backstop the app calls when it signs a devotee in and finds none —
+-- and what saves a corrected name after an account recovery.
+--
+-- It works on auth.uid() alone, so a devotee can only create or rename
+-- their OWN profile, and it can never make a second row for an account
+-- because the profile's primary key IS the auth id. It writes `name`
+-- and nothing else: rounds, history, devotee_id and is_admin are left
+-- exactly as they were, which is what makes recovery safe.
+drop function if exists public.ensure_profile(text);
+create function public.ensure_profile(p_name text default null)
+returns table (
+  id uuid, name text, devotee_id text, group_name text, is_admin boolean
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_uid   uuid := auth.uid();
+  v_email text;
+  v_name  text;
+begin
+  if v_uid is null then
+    raise exception 'Not signed in.' using errcode = '28000';
+  end if;
+
+  select u.email into v_email from auth.users u where u.id = v_uid;
+  v_name := nullif(btrim(coalesce(p_name, '')), '');
+
+  -- Created only if this account has none. ON CONFLICT is deliberately
+  -- avoided here: this function's OUT parameters are named after the
+  -- columns, and plpgsql would read the conflict target as one of those
+  -- variables. The handler covers the race with a concurrent signup.
+  begin
+    insert into public.profiles (id, name, devotee_id)
+    select v_uid,
+           coalesce(v_name, nullif(split_part(coalesce(v_email, ''), '@', 1), ''), 'Devotee'),
+           'HKMM' || lpad(nextval('public.devotee_seq')::text, 3, '0')
+    where not exists (select 1 from public.profiles p2 where p2.id = v_uid);
+  exception when unique_violation then
+    null;   -- another connection created it first; that row stands
+  end;
+
+  update public.profiles p
+     set name       = coalesce(v_name, p.name),
+         devotee_id = coalesce(p.devotee_id,
+                        'HKMM' || lpad(nextval('public.devotee_seq')::text, 3, '0'))
+   where p.id = v_uid;
+
+  return query
+    select p.id, p.name, p.devotee_id, p.group_name, p.is_admin
+    from public.profiles p
+    where p.id = v_uid;
+end;
 $$;
 
 -- ---------- Admin is pinned to one email ----------
@@ -296,6 +360,9 @@ grant execute on function public.event_totals(uuid) to authenticated;
 grant execute on function public.admin_devotees() to authenticated;
 grant execute on function public.is_admin() to authenticated;
 grant execute on function public.admin_email() to authenticated;
+
+revoke all on function public.ensure_profile(text) from public, anon;
+grant execute on function public.ensure_profile(text) to authenticated;
 
 -- ---------- Seed: a first event ----------
 insert into public.events (name, start_at, end_at, status, goal_rounds, visibility, description)

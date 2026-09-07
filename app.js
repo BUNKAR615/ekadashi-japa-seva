@@ -27,7 +27,8 @@
     tab: 'japa', adminSection: 'overview',
     sheet: null, draft: '', capped: false,
     query: '', editEventId: null,
-    toastTimer: null, busy: false
+    toastTimer: null, busy: false,
+    signingOut: false            // a sign-out this app asked for, not an expiry
   };
 
   /* ---------- Helpers ---------- */
@@ -94,7 +95,27 @@
 
   /* ---------- Loading ---------- */
 
+  // How long what is on screen may be trusted before it is re-read from
+  // the database. A devotee who never signs out must still see the
+  // challenge an admin opened this morning.
+  const FRESH_MS = 25000;
+  const POLL_MS = 60000;
+  let lastLoad = 0;
+  const isStale = () => Date.now() - lastLoad > FRESH_MS;
+
   async function refresh() {
+    // The account itself is read again too: the name, devotee ID and
+    // admin flag all live in the database and can change while the app
+    // is open — most obviously right after an account recovery.
+    try {
+      const me = await store.currentUser({ refresh: true });
+      if (me) data.user = me;
+    } catch (e) {
+      // Keep the account already in hand; the reads below will report
+      // the real problem if there is one.
+      console.warn('Could not re-read the profile:', e.message);
+    }
+
     data.events = await store.listEvents();
     const ev = activeEvent() || lastClosed() || null;
     data.event = ev;
@@ -142,6 +163,7 @@
     try {
       await refresh();
       data.loadError = null;
+      lastLoad = Date.now();
       render();
     } catch (e) {
       console.error(e);
@@ -164,59 +186,194 @@
     finally { $('#loading').classList.add('hidden'); }
   }
 
+  // A quiet re-read, used whenever the app comes back into view. It
+  // never disturbs what the devotee is doing: no spinner, no scroll
+  // jump, and it stands aside while the keypad or a form is open. If it
+  // fails, what is already on screen simply stays.
+  async function silentRefresh(force) {
+    if (!data.user || ui.busy || ui.sheet || document.hidden) return;
+    // Not while someone is typing in the devotee search either — a
+    // re-render would take the caret with it.
+    const active = document.activeElement;
+    if (active && /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName)) return;
+    if (!force && !isStale()) return;
+    ui.busy = true;
+    try {
+      await refresh();
+      data.loadError = null;
+      lastLoad = Date.now();
+      render({ keepScroll: true });
+    } catch (e) {
+      console.warn('Background refresh failed:', e.message);
+    } finally {
+      ui.busy = false;
+    }
+  }
+
+  // Staying signed in must not mean seeing yesterday's temple. Every
+  // way the app can come back into view re-reads from the database.
+  function watchForChanges() {
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) silentRefresh(); });
+    window.addEventListener('focus', () => silentRefresh());
+    window.addEventListener('online', () => silentRefresh(true));
+    // Returning with the back button can restore a frozen page.
+    window.addEventListener('pageshow', e => { if (e.persisted) silentRefresh(true); });
+    setInterval(() => silentRefresh(), POLL_MS);
+  }
+
   /* ---------- Auth ---------- */
 
+  /* The one card on the welcome screen has seven states. Everything an
+     account can need is reachable from the first one, so nobody is ever
+     left on a screen with no way forward:
+
+       signin   email + password
+       create   name + email + password
+       forgot   email — Supabase emails a link to set a new password
+       recover  this address already has an account; offer to recover it
+       sent     the link has been emailed; nothing to do but open it
+       reset    back from the link: choose the new password
+       resume   still signed in, but the database could not be reached  */
+
+  const AUTH = {
+    signin: {
+      heading: 'Welcome back',
+      sub: 'Sign in with your email address and password.',
+      fields: ['email', 'pass'],
+      passLabel: 'Password', passAuto: 'current-password',
+      submit: 'Sign In',
+      links: [['create', 'Create Account'], ['forgot', 'Forgot password?']]
+    },
+    create: {
+      heading: 'Create your account',
+      sub: 'Your email address is your account. If you have chanted with us before, use the same address — your rounds are waiting under it.',
+      fields: ['name', 'email', 'pass'],
+      passLabel: 'Choose a password', passAuto: 'new-password',
+      submit: 'Create Account',
+      links: [['signin', 'Sign In'], ['forgot', 'Forgot password?']]
+    },
+    forgot: {
+      heading: 'Reset your password',
+      sub: 'Enter your email address and we will send you a link to set a new password. Your rounds and history stay exactly as they are.',
+      fields: ['email'],
+      submit: 'Email me a reset link',
+      links: [['signin', 'Back to sign in'], ['create', 'Create Account']]
+    },
+    recover: {
+      heading: 'This email already has an account',
+      sub: '',
+      fields: [],
+      submit: 'Email me a recovery link',
+      links: [['signin', 'Back to sign in'], ['create', 'Use a different email']]
+    },
+    sent: {
+      heading: 'Check your email',
+      sub: '',
+      fields: [],
+      submit: '',
+      // Set in setAuthMode: what to offer next depends on which kind of
+      // email has just gone out.
+      links: [['signin', 'Back to sign in']]
+    },
+    reset: {
+      heading: 'Choose a new password',
+      sub: 'This is the only thing that changes. Your devotee ID, your rounds and your history stay with this account.',
+      fields: ['name', 'pass', 'pass2'],
+      passLabel: 'New password', passAuto: 'new-password',
+      submit: 'Save and continue',
+      links: [['cancel-reset', 'Cancel']]
+    },
+    resume: {
+      heading: 'You are still signed in',
+      sub: 'The temple database could not be reached just now.',
+      fields: [],
+      submit: 'Try again',
+      links: [['sign-out-auth', 'Sign out instead']]
+    }
+  };
+
   let authMode = 'signin';
+  let authEmail = '';        // the address a recovery or confirmation is about
+  let authName = '';         // a name typed on the create screen, kept for the reset screen
+  let authSentKind = '';     // 'recovery' | 'confirm'
 
-  function initAuth() {
-    const form = $('#auth-form');
-    const toggle = $('#auth-toggle');
+  const authIsBusy = () => $('#auth-submit').disabled;
 
-    toggle.addEventListener('click', ev => {
-      ev.preventDefault();
-      authMode = authMode === 'signin' ? 'create' : 'signin';
-      const create = authMode === 'create';
-      $('#auth-name-block').classList.toggle('hidden', !create);
-      $('#auth-submit').textContent = create ? 'Create Account' : 'Sign In';
-      $('#auth-switch').firstChild.textContent = create ? 'Already registered? ' : 'New here? ';
-      toggle.textContent = create ? 'Sign In' : 'Create Account';
-      hideAuthMsg();
-    });
+  function setAuthMode(mode, opts) {
+    if (!AUTH[mode]) mode = 'signin';
+    authMode = mode;
+    const cfg = AUTH[mode];
+    const o = opts || {};
 
-    form.addEventListener('submit', async ev => {
-      ev.preventDefault();
-      const email = $('#auth-email').value.trim();
-      const pass = $('#auth-pass').value;
-      const name = $('#auth-name').value.trim();
-      const btn = $('#auth-submit');
+    const show = (sel, on) => $(sel).classList.toggle('hidden', !on);
+    show('#auth-name-block', cfg.fields.indexOf('name') >= 0);
+    show('#auth-email-block', cfg.fields.indexOf('email') >= 0);
+    show('#auth-pass-block', cfg.fields.indexOf('pass') >= 0);
+    show('#auth-pass2-block', cfg.fields.indexOf('pass2') >= 0);
 
-      if (!email || !pass) return authMsg('Please enter your email and password.');
-      if (authMode === 'create' && !name) return authMsg('Please enter your full name.');
+    $('#auth-heading').textContent = cfg.heading;
+    $('#auth-sub').textContent = cfg.sub || '';
+    show('#auth-sub', !!cfg.sub);
 
-      btn.disabled = true;
-      const label = btn.textContent;
-      btn.textContent = 'Please wait…';
-      hideAuthMsg();
+    if (cfg.passLabel) $('#auth-pass-label').textContent = cfg.passLabel;
+    if (cfg.passAuto) $('#auth-pass').setAttribute('autocomplete', cfg.passAuto);
 
-      try {
-        if (authMode === 'create') {
-          const res = await store.signUp(email, pass, name);
-          if (res.needsConfirmation) {
-            authMsg('Account created. Please check your email for a confirmation link, then sign in.', 'ok');
-            return;
-          }
-          data.user = res.user;
-        } else {
-          data.user = await store.signIn(email, pass);
-        }
-        await enterApp();
-      } catch (err) {
-        authMsg(err.message || 'Could not sign in. Please try again.');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = label;
-      }
-    });
+    const btn = $('#auth-submit');
+    btn.textContent = cfg.submit || '';
+    btn.disabled = false;
+    show('#auth-submit', !!cfg.submit);
+
+    // A reset link that never arrived can be asked for again; a
+    // confirmation link cannot be re-sent from here, so it is not offered.
+    const links = (mode === 'sent' && authSentKind === 'recovery')
+      ? [['forgot', 'Send it again'], ['signin', 'Back to sign in']]
+      : cfg.links;
+    $('#auth-switch').innerHTML = links
+      .map(([to, label]) => `<a href="#" data-authmode="${to}">${esc(label)}</a>`)
+      .join('');
+
+    authNote(o.note || defaultNote(mode), o.noteKind || (mode === 'sent' ? 'ok' : ''));
+    if (!o.keepError) hideAuthMsg();
+
+    // Passwords are never carried from one state to the next.
+    $('#auth-pass').value = '';
+    $('#auth-pass2').value = '';
+    // The address, though, follows the devotee from screen to screen so
+    // it never has to be typed twice.
+    if (cfg.fields.indexOf('email') >= 0) $('#auth-email').value = authEmail || $('#auth-email').value;
+    if (mode === 'reset') $('#auth-name').value = authName || '';
+
+    const firstId = { name: 'auth-name', email: 'auth-email', pass: 'auth-pass' }[cfg.fields[0]];
+    if (firstId && !o.noFocus) {
+      try { $('#' + firstId).focus({ preventScroll: true }); } catch (e) {}
+    }
+  }
+
+  // The wording each state needs, in the box above the fields.
+  function defaultNote(mode) {
+    const who = authEmail ? `<b>${esc(authEmail)}</b>` : 'that address';
+    if (mode === 'recover') {
+      return `An account with this email already exists. You can recover it and set a new password — `
+        + `your devotee ID, your rounds and your challenge history all stay with it.<br><br>`
+        + `We will email a link to ${who}. Opening it lets you choose a new password and takes you straight in.`;
+    }
+    if (mode === 'sent') {
+      return authSentKind === 'confirm'
+        ? `Your account is made. Open the confirmation link we sent to ${who}, and you are in.`
+        : `A link is on its way to ${who}. Opening it brings you back here to choose a new password. `
+          + `It can only be used once, and it expires within the hour.<br><br>`
+          + `If nothing arrives, check the spam folder.`;
+    }
+    if (mode === 'reset' && authEmail) {
+      return `Setting a new password for ${who}.`;
+    }
+    return '';
+  }
+
+  function authNote(html, kind) {
+    const el = $('#auth-note');
+    el.innerHTML = html || '';
+    el.className = 'auth-note' + (kind === 'ok' ? ' ok' : '') + (html ? '' : ' hidden');
   }
 
   function authMsg(text, kind) {
@@ -224,14 +381,161 @@
     el.textContent = text;
     el.style.color = kind === 'ok' ? '#2F7D45' : '';
     el.classList.remove('hidden');
+    return null;
   }
   function hideAuthMsg() { $('#auth-error').classList.add('hidden'); }
+
+  function initAuth() {
+    $('#auth-form').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      await submitAuth();
+    });
+    setAuthMode('signin', { noFocus: true });
+  }
+
+  // What each state must have before it is worth asking the server.
+  function validateAuth(mode, v) {
+    const MIN = (window.JapaStore && window.JapaStore.MIN_PASSWORD) || 6;
+    if (AUTH[mode].fields.indexOf('email') >= 0) {
+      if (!v.email) return 'Please enter your email address.';
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.email)) return 'Please check the email address — it does not look complete.';
+    }
+    if (mode === 'create' && !v.name) return 'Please enter your full name.';
+    if (mode === 'signin' && !v.pass) return 'Please enter your password.';
+    if ((mode === 'create' || mode === 'reset') && v.pass.length < MIN) {
+      return `Please choose a password of at least ${MIN} characters.`;
+    }
+    if (mode === 'reset' && v.pass !== v.pass2) return 'The two passwords do not match.';
+    return null;
+  }
+
+  async function submitAuth() {
+    if (authIsBusy()) return;
+    const mode = authMode;
+    const v = {
+      name: $('#auth-name').value.trim().replace(/\s+/g, ' '),
+      email: $('#auth-email').value.trim().toLowerCase(),
+      pass: $('#auth-pass').value,
+      pass2: $('#auth-pass2').value
+    };
+
+    const bad = validateAuth(mode, v);
+    if (bad) return authMsg(bad);
+
+    const btn = $('#auth-submit');
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Please wait…';
+    hideAuthMsg();
+
+    try {
+      if (mode === 'signin') {
+        data.user = await store.signIn(v.email, v.pass);
+        await enterApp();
+
+      } else if (mode === 'create') {
+        // The address decides everything. An address already registered
+        // is recovered, never duplicated.
+        const res = await store.signUp(v.email, v.pass, v.name);
+        authEmail = v.email;
+        authName = v.name;
+        if (res.status === 'signed-in') {
+          data.user = res.user;
+          await enterApp();
+          if (res.recognised) toast('Welcome back — you are signed in to your existing account.');
+        } else if (res.status === 'confirm') {
+          authSentKind = 'confirm';
+          setAuthMode('sent');
+        } else {
+          setAuthMode('recover');
+        }
+
+      } else if (mode === 'forgot' || mode === 'recover') {
+        const addr = mode === 'recover' ? authEmail : v.email;
+        const res = await store.sendRecovery(addr);
+        authEmail = addr;
+        // Demo mode has no email to send, so it goes straight on.
+        if (res && res.demo) {
+          setAuthMode('reset', { note: 'Demo mode: the emailed link is skipped. Choose a new password.' });
+        } else {
+          authSentKind = 'recovery';
+          setAuthMode('sent');
+        }
+
+      } else if (mode === 'reset') {
+        // The one-time session from the emailed link is live here.
+        data.user = await store.completeRecovery(v.pass, v.name);
+        authName = '';
+        await enterApp();
+        toast('Your password is updated. Hare Krishna!');
+
+      } else if (mode === 'resume') {
+        const user = await store.currentUser({ refresh: true });
+        if (!user) { setAuthMode('signin'); return; }
+        data.user = user;
+        await enterApp();
+      }
+    } catch (err) {
+      console.error(err);
+      authMsg(err.message || 'Something went wrong. Please try again.');
+    } finally {
+      btn.disabled = false;
+      // A state that moved on has already set its own wording; only a
+      // state still on screen gets its button label back.
+      if (authMode === mode) btn.textContent = label;
+    }
+  }
+
+  // The links under the button.
+  async function authLink(to) {
+    if (authIsBusy()) return;
+    if (to === 'cancel-reset') {
+      // The reset link left a live session behind. Leaving the screen
+      // without choosing a password ends it rather than leaving a
+      // half-finished recovery signed in.
+      try { await store.signOut(); } catch (e) {}
+      authEmail = ''; authName = '';
+      setAuthMode('signin');
+      return;
+    }
+    if (to === 'sign-out-auth') {
+      try { await store.signOut(); } catch (e) {}
+      data.user = null;
+      setAuthMode('signin');
+      return;
+    }
+    // "Use a different email" starts with an empty box.
+    if (to === 'create' && authMode === 'recover') {
+      authEmail = '';
+      $('#auth-email').value = '';
+    }
+    setAuthMode(to);
+  }
+
+  // Bring a devotee back to the recovery screen after following a link.
+  async function startPasswordReset() {
+    showWelcome();
+    // The link's session is live, so the account can be named on screen.
+    try {
+      const me = await store.currentUser();
+      if (me) { authEmail = me.email || ''; authName = me.name || ''; }
+    } catch (e) { /* the name is a nicety, not a requirement */ }
+    setAuthMode('reset');
+  }
+
+  function showWelcome() {
+    closeOverlay();
+    $('#app').classList.add('hidden');
+    $('#welcome').classList.remove('hidden');
+    $('#loading').classList.add('hidden');
+  }
 
   async function enterApp() {
     $('#loading').classList.remove('hidden');
     data.loadError = null;
     try {
       await refresh();
+      lastLoad = Date.now();
     } catch (e) {
       // A failed first load used to be swallowed, which showed an empty
       // app as though the temple simply had no challenge running.
@@ -243,26 +547,34 @@
     $('#loading').classList.add('hidden');
     ui.tab = 'japa';
     ui.adminSection = 'overview';
+    authEmail = ''; authName = ''; authSentKind = '';
     render();
   }
 
   async function signOut() {
-    await store.signOut();
+    ui.signingOut = true;
+    try {
+      await store.signOut();
+    } finally {
+      ui.signingOut = false;
+    }
     data.user = null;
+    data.loadError = null;
+    lastLoad = 0;
     ui.tab = 'japa';
     ui.adminSection = 'overview';
-    closeOverlay();
-    $('#app').classList.add('hidden');
-    $('#welcome').classList.remove('hidden');
-    $('#auth-pass').value = '';
+    showWelcome();
+    setAuthMode('signin', { noFocus: true });
   }
 
   /* ---------- Render ---------- */
 
-  function render() {
+  // keepScroll is used by the quiet background re-read, so fresh numbers
+  // arrive without yanking the page back to the top under the reader.
+  function render(opts) {
     renderHeader();
     renderTabs();
-    renderContent();
+    renderContent(!!(opts && opts.keepScroll));
   }
 
   function renderHeader() {
@@ -303,17 +615,22 @@
     </div>`;
   }
 
-  function renderContent() {
+  function renderContent(keepScroll) {
     const c = $('#content');
-    if (data.loadError) { c.innerHTML = viewLoadError(); c.scrollTop = 0; return; }
-    switch (ui.tab) {
-      case 'japa':      c.innerHTML = viewJapa(); break;
-      case 'together':  c.innerHTML = viewTogether(); break;
-      case 'me':        c.innerHTML = viewMe(); break;
-      case 'admin':     c.innerHTML = viewAdmin(); break;
-      default:          c.innerHTML = viewJapa();
+    const wasAt = c.scrollTop;
+    if (data.loadError) {
+      c.innerHTML = viewLoadError();
+    } else {
+      switch (ui.tab) {
+        case 'japa':      c.innerHTML = viewJapa(); break;
+        case 'together':  c.innerHTML = viewTogether(); break;
+        case 'me':        c.innerHTML = viewMe(); break;
+        case 'admin':     c.innerHTML = viewAdmin(); break;
+        default:          c.innerHTML = viewJapa();
+      }
     }
-    c.scrollTop = 0;
+    c.scrollTop = keepScroll ? wasAt : 0;
+    if (data.loadError) return;
     const search = $('#devotee-search');
     if (search) {
       search.value = ui.query;
@@ -696,21 +1013,25 @@
   function viewAdminDevotees() {
     return `<div class="pad-lg">
       <h2 class="h2" style="margin-bottom:12px">Devotees</h2>
-      <input type="text" id="devotee-search" class="search-field" placeholder="Search name or devotee ID">
+      <input type="text" id="devotee-search" class="search-field" placeholder="Search name, email or devotee ID">
       <div id="devotee-list-wrap">${devoteeListHtml()}</div>
     </div>`;
   }
 
   function devoteeListHtml() {
     const q = ui.query.trim().toLowerCase();
+    // Two devotees may share a name, so the address is searchable too —
+    // it is the one thing that tells the accounts apart.
     const people = data.devotees.filter(p =>
-      !q || p.name.toLowerCase().includes(q) || (p.devoteeId || '').toLowerCase().includes(q));
+      !q || p.name.toLowerCase().includes(q)
+         || (p.email || '').toLowerCase().includes(q)
+         || (p.devoteeId || '').toLowerCase().includes(q));
     const rows = people.map(p => `
       <div class="devotee-row">
         <div class="av">${esc((p.name || '?')[0])}</div>
         <div class="who">
           <div class="nm">${esc(p.name)}${p.isAdmin ? ' <span class="admin-tag">admin</span>' : ''}</div>
-          <div class="sb">${esc(p.devoteeId)} · ${esc(p.phone || '—')}</div>
+          <div class="sb">${esc(p.devoteeId)} · ${esc(p.email || p.phone || '—')}</div>
         </div>
         <div class="cnt">
           <div class="n">${p.rounds}</div>
@@ -867,8 +1188,8 @@
     if (!ev) { toast('No challenge to export yet.'); return; }
     try {
       const people = await store.devotees(ev.id);
-      const rows = [['Name', 'Devotee ID', 'Phone', 'Rounds', 'Holy names', 'Last update']];
-      people.forEach(p => rows.push([p.name, p.devoteeId, p.phone, p.rounds, p.rounds * NAMES_PER_ROUND, p.time]));
+      const rows = [['Name', 'Email', 'Devotee ID', 'Phone', 'Rounds', 'Holy names', 'Last update']];
+      people.forEach(p => rows.push([p.name, p.email || '', p.devoteeId, p.phone, p.rounds, p.rounds * NAMES_PER_ROUND, p.time]));
       const csv = rows.map(r => r.map(v => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
       const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
       const a = document.createElement('a');
@@ -1018,9 +1339,15 @@
   /* ---------- Events ---------- */
 
   document.addEventListener('click', async ev => {
-    const t = ev.target.closest('[data-action],[data-tab],[data-adminsec],[data-key],[data-add],.vis-option');
+    const t = ev.target.closest('[data-action],[data-tab],[data-adminsec],[data-key],[data-add],[data-authmode],.vis-option');
     if (!t) return;
 
+    // The links under the sign-in card.
+    if (t.dataset.authmode) {
+      ev.preventDefault();
+      await authLink(t.dataset.authmode);
+      return;
+    }
     if (t.dataset.adminsec) {
       ui.adminSection = t.dataset.adminsec;
       if (ui.adminSection === 'devotees') await reload();
@@ -1071,15 +1398,64 @@
       authMsg(e.message || 'The temple database could not be reached.');
       return;
     }
+
     initAuth();
+    watchForChanges();
+
+    // A session that ends on its own — expired, or signed out in another
+    // tab — returns the devotee to the welcome screen instead of leaving
+    // an app on screen whose every read now fails.
+    if (store.onAuthEvent) {
+      store.onAuthEvent(event => {
+        if (event !== 'SIGNED_OUT') return;
+        if (ui.signingOut || !data.user) return;
+        data.user = null;
+        lastLoad = 0;
+        showWelcome();
+        setAuthMode('signin', { noFocus: true, keepError: true });
+        authMsg('Your session has ended. Please sign in again.');
+      });
+    }
+
+    // A confirmation or password-reset link carries its credentials in
+    // the address bar. It has to be dealt with before anything decides
+    // which screen to show.
+    let link = { type: null };
+    try { link = await store.consumeAuthLink(); }
+    catch (e) { console.warn('Could not read the sign-in link:', e.message); }
+
+    if (link.error) {
+      setAuthMode(link.type === 'recovery' ? 'forgot' : 'signin', { noFocus: true, keepError: true });
+      authMsg(link.error);
+      return;
+    }
+    if (link.type === 'recovery') {
+      await startPasswordReset();
+      return;
+    }
+
+    // A returning devotee: the session was kept in this browser, so the
+    // app opens straight onto today's data.
     try {
       const user = await store.currentUser();
       if (user) {
         data.user = user;
         await enterApp();
+        return;
       }
     } catch (e) {
       console.warn('Could not restore session:', e.message);
+      // Signed in, but the profile could not be read — a network
+      // stumble, not a sign-out. Offer to try again rather than asking
+      // for a password that would meet the very same error.
+      let signedIn = false;
+      try { signedIn = await store.hasSession(); } catch (e2) {}
+      if (signedIn) {
+        setAuthMode('resume', { noFocus: true, keepError: true });
+        authMsg(e.message || 'Could not reach the temple database.');
+        return;
+      }
     }
+    setAuthMode('signin', { noFocus: true });
   })();
 })();

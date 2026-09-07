@@ -37,6 +37,12 @@ rounds at all: the first schema stored a challenge as a date plus two clock-time
 strings, and every query the app now makes asks for `start_at` / `end_at`, so
 PostgREST rejects it with `42703 column events.start_at does not exist`.
 
+Then run [`supabase/fix-004-accounts.sql`](supabase/fix-004-accounts.sql). It
+gives every account a profile (including any made before the signup trigger
+existed, which otherwise get stuck on *"Your devotee profile is still being set
+up"*), adds `ensure_profile()`, and puts the email address in the admin devotee
+directory. It touches no rounds and deletes nothing.
+
 **3. Paste your keys** into [`config.js`](config.js):
 
 ```js
@@ -56,16 +62,62 @@ inside the schema. Signing up with that address grants the Admin tab
 automatically; every other account is an ordinary user. To change who it is,
 edit that one function and re-run it.
 
-**5. Bump the cache version.** After changing `config.js`, edit `index.html` and
+**5. Allow the app's address to receive email links.** In the dashboard, under
+**Authentication > URL Configuration**, add the address the app is served from to
+**Redirect URLs**:
+
+```
+https://japa-seva.vercel.app
+https://japa-seva.vercel.app/
+http://localhost:8734
+```
+
+Password-reset and confirmation emails send devotees back to that address. If it
+is not listed, Supabase drops them at the project's Site URL instead and the
+reset cannot finish. **Forgot password does not work until this is done.**
+
+**6. Bump the cache version.** After changing `config.js`, edit `index.html` and
 raise the `?v=` number by one on the script and stylesheet tags, so phones pick up the
 new files instead of a cached copy.
+
+## Accounts
+
+**The email address is the account.** Everything a devotee has ever offered
+hangs off their auth id, and that id never changes — so recovering an address
+keeps every round, every challenge and the devotee ID attached to it. Names are
+not identifying: three devotees called Dinesh with three addresses are three
+separate accounts, and the app never merges them.
+
+The one card on the welcome screen covers every case, so nobody is ever left on
+a screen with no way forward:
+
+| The devotee… | What happens |
+|---|---|
+| is new | **Create Account** — name, email, password. Straight into the app. |
+| knows their password | **Sign In** — email and password. |
+| has forgotten it | **Forgot password?** — Supabase emails a link; opening it asks for a new password and takes them in. |
+| types an address that already exists into Create Account | No second account is made. If the password they typed happens to be the account's own they simply go in; otherwise the app offers to recover that account by email. |
+| comes back later | The session was kept in this browser. The app opens straight onto today's data. |
+
+**Why recovery goes through email.** Letting anyone who knows an address set a
+new password on it would hand them somebody else's rounds, history and — for one
+address — the Admin tab. Supabase's own reset flow is used instead: it hashes the
+new password, holds the one-time token, and this app never sees or stores a
+password anywhere. Recovery keeps the account's database id, so nothing is lost.
+
+**Email delivery.** Supabase's built-in mail service is rate-limited to a
+handful of messages an hour, which is fine for occasional recovery but not for a
+whole temple resetting at once. For anything busier, set your own SMTP under
+**Project Settings > Authentication > SMTP Settings**.
 
 ### Email confirmation
 
 By default Supabase emails a confirmation link on signup. For a temple group you
 may prefer to turn it off (**Authentication > Sign In / Providers > Email >
 Confirm email**), so devotees can start chanting immediately. Leave it on if you
-want verified addresses.
+want verified addresses. The app handles both: with it on, a new account is told
+to open the link; with it off, the devotee is signed in at once. Either way an
+address that is already registered is recovered rather than duplicated.
 
 ## Security model
 
@@ -94,6 +146,17 @@ so they hold even if someone edits the page in their browser:
   the existing record and stamps `updated_at`.
 - Admin is pinned to one email address by a trigger; nobody can be promoted
   from inside the app.
+- **One account per email address.** Uniqueness is enforced by Supabase Auth
+  itself — `auth.users` has a unique index on the address — so a second signup
+  for a registered address is refused before it reaches this schema. The app
+  recovers the existing account instead of trying to create another.
+- **A password is never enough to know an address.** Setting a new password
+  requires the one-time token from Supabase's reset email. Passwords are hashed
+  by Supabase Auth; this app never receives, stores or logs one, and nothing
+  password-shaped is written to the browser — only Supabase's own session token.
+- `ensure_profile()` works on `auth.uid()` alone and writes only `name`, so a
+  devotee can create or rename their own profile and nobody else's, and no call
+  to it can touch rounds, history, devotee IDs or admin status.
 
 ## What's inside
 
@@ -106,6 +169,7 @@ so they hold even if someone edits the page in their browser:
 | `config.js` | Your Supabase keys (blank = demo mode) |
 | `supabase/schema.sql` | Tables, policies and functions; run once in the SQL Editor |
 | `supabase/fix-003-persistence.sql` | **Run this on an existing project.** One idempotent migration to the current schema; supersedes fix-001 and fix-002 |
+| `supabase/fix-004-accounts.sql` | **Run this too.** One profile per account, `ensure_profile()`, and the address in the admin directory |
 | `supabase/fix-002-challenges.sql` | Superseded by fix-003; kept for reference |
 | `manifest.webmanifest` | Installable-app metadata — devotees can add it to their home screen |
 | `assets/` | Temple logo, Srila Prabhupada portrait, and generated app icons |
@@ -152,8 +216,19 @@ anyone else, and the Admin tab adds Overview / Challenges / Devotees.
   rounds and appears on the leaderboard like everyone else, and additionally
   sees the Admin tab. To hand the role over, change the address inside
   admin_email() in the schema.
-- **Overview** — participation, top offerings, CSV export.
-- **Devotees** — searchable directory with phone numbers and status.
+- **Overview** — participation, top offerings, CSV export (with the address,
+  so two devotees of the same name can be told apart).
+- **Devotees** — directory with email addresses, phone numbers and status,
+  searchable by name, address or devotee ID.
+
+**Staying signed in.** Once a devotee has signed in, the session is kept in
+their browser and renewed in the background: closing the app and opening it
+again lands them straight in the app, not on the sign-in card. Signing back in
+is asked for only when they sign out themselves or the session genuinely ends.
+Staying signed in never means seeing yesterday's temple — every time the app
+comes back into view it re-reads the challenge, the leaderboard and the profile
+from the database, so a challenge an admin opened this morning and rounds
+another devotee revised a minute ago are both there.
 
 ## Developing
 
