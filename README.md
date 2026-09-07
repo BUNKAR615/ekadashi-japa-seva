@@ -43,6 +43,11 @@ existed, which otherwise get stuck on *"Your devotee profile is still being set
 up"*), adds `ensure_profile()`, and puts the email address in the admin devotee
 directory. It touches no rounds and deletes nothing.
 
+Then run [`supabase/fix-005-claim-account.sql`](supabase/fix-005-claim-account.sql),
+which makes Create Account replace an existing account rather than refuse. **Read
+its header first** — it deliberately drops the check that the person typing an
+address owns it. See [Accounts](#accounts) below.
+
 **3. Paste your keys** into [`config.js`](config.js):
 
 ```js
@@ -96,14 +101,33 @@ a screen with no way forward:
 | is new | **Create Account** — name, email, password. Straight into the app. |
 | knows their password | **Sign In** — email and password. |
 | has forgotten it | **Forgot password?** — Supabase emails a link; opening it asks for a new password and takes them in. |
-| types an address that already exists into Create Account | No second account is made. If the password they typed happens to be the account's own they simply go in; otherwise the app offers to recover that account by email. |
+| types an address that already exists into Create Account | No second account is made. That account's password and name are replaced with what was just typed and the devotee goes straight in, keeping their devotee ID, rounds and history. |
 | comes back later | The session was kept in this browser. The app opens straight onto today's data. |
 
-**Why recovery goes through email.** Letting anyone who knows an address set a
-new password on it would hand them somebody else's rounds, history and — for one
-address — the Admin tab. Supabase's own reset flow is used instead: it hashes the
-new password, holds the one-time token, and this app never sees or stores a
-password anywhere. Recovery keeps the account's database id, so nothing is lost.
+**Create Account is also the way back in.** A devotee who has forgotten their
+password simply creates their account again with the same address and a new
+password. `claim_account()` finds the existing account by address, replaces its
+password and name, and leaves its id alone — so the rounds, the challenge
+history and the devotee ID are all still there when they arrive.
+
+**What that costs, stated plainly.** This removes the check that the person
+typing an address owns it. Anyone who knows a devotee's address can set a new
+password on their account and sign in as them. That includes the admin address
+in `admin_email()`, which is published in this repository — so it also hands
+over the devotee directory, the phone numbers, the CSV export and control of
+every challenge.
+
+It was chosen knowingly, to spare devotees the emailed link. The safe path is
+still there and still works — **Forgot password?** on the sign-in card uses
+Supabase's own reset flow, which proves the devotee reads that inbox. To make
+that the only way back in, drop the function:
+
+```sql
+drop function if exists public.claim_account(text, text, text);
+```
+
+The app notices it is gone and falls back to the emailed link on its own; no
+front-end change is needed.
 
 **Email delivery.** Supabase's built-in mail service is rate-limited to a
 handful of messages an hour, which is fine for occasional recovery but not for a
@@ -150,10 +174,12 @@ so they hold even if someone edits the page in their browser:
   itself — `auth.users` has a unique index on the address — so a second signup
   for a registered address is refused before it reaches this schema. The app
   recovers the existing account instead of trying to create another.
-- **A password is never enough to know an address.** Setting a new password
-  requires the one-time token from Supabase's reset email. Passwords are hashed
-  by Supabase Auth; this app never receives, stores or logs one, and nothing
-  password-shaped is written to the browser — only Supabase's own session token.
+- **Knowing an address IS enough to take the account**, by deliberate choice —
+  see [Accounts](#accounts). Passwords are still hashed (bcrypt, never stored in
+  readable form) and nothing password-shaped is written to the browser, only
+  Supabase's own session token. But `claim_account()` is callable before
+  sign-in, so the address alone is what guards an account. Dropping that one
+  function restores the emailed-link requirement.
 - `ensure_profile()` works on `auth.uid()` alone and writes only `name`, so a
   devotee can create or rename their own profile and nobody else's, and no call
   to it can touch rounds, history, devotee IDs or admin status.
@@ -170,6 +196,7 @@ so they hold even if someone edits the page in their browser:
 | `supabase/schema.sql` | Tables, policies and functions; run once in the SQL Editor |
 | `supabase/fix-003-persistence.sql` | **Run this on an existing project.** One idempotent migration to the current schema; supersedes fix-001 and fix-002 |
 | `supabase/fix-004-accounts.sql` | **Run this too.** One profile per account, `ensure_profile()`, and the address in the admin directory |
+| `supabase/fix-005-claim-account.sql` | **Read its header before running.** Makes Create Account replace an existing account instead of refusing |
 | `supabase/verify-accounts.sql` | Read-only health report on the accounts; run it any time to check the above landed |
 | `supabase/fix-002-challenges.sql` | Superseded by fix-003; kept for reference |
 | `manifest.webmanifest` | Installable-app metadata — devotees can add it to their home screen |

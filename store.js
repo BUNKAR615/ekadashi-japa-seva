@@ -200,17 +200,23 @@
       },
 
       // Same rule as the database: an address that already has an
-      // account is never signed up twice.
+      // account is never signed up twice — its details are replaced and
+      // it keeps its devotee ID, so the rounds filed under it stay put.
       async signUp(email, _pass, name) {
+        sync();
         const addr = normEmail(email);
-        if (s.accounts[addr]) return { status: 'exists', email: addr };
-        s.accounts[addr] = {
-          name: cleanName(name) || addr.split('@')[0],
-          devoteeId: nextDevoteeId(),
-          group: 'Jodhpur Folk'
-        };
+        const replaced = !!s.accounts[addr];
+        if (replaced) {
+          if (cleanName(name)) s.accounts[addr].name = cleanName(name);
+        } else {
+          s.accounts[addr] = {
+            name: cleanName(name) || addr.split('@')[0],
+            devoteeId: nextDevoteeId(),
+            group: 'Jodhpur Folk'
+          };
+        }
         s.email = addr; save();
-        return { status: 'signed-in', user: shape(addr) };
+        return { status: 'signed-in', user: shape(addr), replaced };
       },
 
       // Nothing is emailed in demo mode, so the link step is skipped and
@@ -498,6 +504,33 @@
     // who knows an address set a new password on it would hand them
     // somebody else's rounds, history and — for one address — the admin
     // tab, so that is not offered.
+    // supabase/fix-005-claim-account.sql. The address is the account:
+    // if one already exists under it, its password and name are replaced
+    // with what has just been typed, without the old password being
+    // asked for. The account keeps its id, so the devotee's rounds,
+    // challenge history and devotee ID stay attached to it.
+    //
+    // Returns:
+    //   'replaced' — the address had an account; it is now theirs to
+    //                sign into with the password they just chose
+    //   'new'      — nothing is registered under that address
+    //   null       — this database has no claim_account(), so the app
+    //                falls back to recovering by emailed link
+    async function claimAccount(addr, password, name) {
+      const { data, error } = await sb.rpc('claim_account', {
+        p_email: addr,
+        p_password: password,
+        p_name: cleanName(name) || null
+      });
+      if (error) {
+        const m = error.message || '';
+        if (/claim_account/i.test(m) && /schema cache|could not find|does not exist/i.test(m)) return null;
+        throw new Error(friendly(m));
+      }
+      const row = Array.isArray(data) ? data[0] : data;
+      return (row && row.found) ? 'replaced' : 'new';
+    }
+
     async function existingAccount(addr, password, name) {
       const { data, error } = await sb.auth.signInWithPassword({ email: addr, password });
       if (!error && data && data.user) {
@@ -550,13 +583,29 @@
       },
 
       // Creating an account with an address that is already registered
-      // never makes a second devotee — see existingAccount above.
+      // never makes a second devotee. What happens instead depends on
+      // whether the database has claim_account(): with it, the existing
+      // account's details are replaced with the ones just typed and the
+      // devotee goes straight in; without it, the account is recovered
+      // by emailed link (see existingAccount above).
+      //
       // Returns one of:
       //   { status: 'signed-in', user }  — in, and the app can open
       //   { status: 'confirm',  email }  — a confirmation link was sent
       //   { status: 'exists',   email }  — recover this account instead
       async signUp(email, password, name) {
         const addr = normEmail(email);
+
+        // The address decides everything. An address that already has an
+        // account has its password and name replaced here, keeping its
+        // id — and with it every round already offered.
+        if (await claimAccount(addr, password, name) === 'replaced') {
+          const { data, error } = await sb.auth.signInWithPassword({ email: addr, password });
+          if (error) throw new Error(friendly(error.message));
+          const user = await adopt(data.user, name);
+          return { status: 'signed-in', user, replaced: true };
+        }
+
         const { data, error } = await sb.auth.signUp({
           email: addr,
           password,

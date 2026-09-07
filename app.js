@@ -246,7 +246,7 @@
     },
     create: {
       heading: 'Create your account',
-      sub: 'Your email address is your account. If you have chanted with us before, use the same address — your rounds are waiting under it.',
+      sub: 'Your email address is your account. Chanted with us before? Use the same address and a new password — your rounds, your devotee ID and your history stay exactly where they are.',
       fields: ['name', 'email', 'pass'],
       passLabel: 'Choose a password', passAuto: 'new-password',
       submit: 'Create Account',
@@ -442,7 +442,10 @@
         if (res.status === 'signed-in') {
           data.user = res.user;
           await enterApp();
-          if (res.recognised) toast('Welcome back — you are signed in to your existing account.');
+          // The address already had an account: its details are now the
+          // ones just typed, and its rounds are where they always were.
+          if (res.replaced)        toast('Welcome back — your account details have been updated.');
+          else if (res.recognised) toast('Welcome back — you are signed in to your existing account.');
         } else if (res.status === 'confirm') {
           authSentKind = 'confirm';
           setAuthMode('sent');
