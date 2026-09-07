@@ -170,6 +170,7 @@ so they hold even if someone edits the page in their browser:
 | `supabase/schema.sql` | Tables, policies and functions; run once in the SQL Editor |
 | `supabase/fix-003-persistence.sql` | **Run this on an existing project.** One idempotent migration to the current schema; supersedes fix-001 and fix-002 |
 | `supabase/fix-004-accounts.sql` | **Run this too.** One profile per account, `ensure_profile()`, and the address in the admin directory |
+| `supabase/verify-accounts.sql` | Read-only health report on the accounts; run it any time to check the above landed |
 | `supabase/fix-002-challenges.sql` | Superseded by fix-003; kept for reference |
 | `manifest.webmanifest` | Installable-app metadata — devotees can add it to their home screen |
 | `assets/` | Temple logo, Srila Prabhupada portrait, and generated app icons |
