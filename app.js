@@ -242,7 +242,11 @@
       fields: ['email', 'pass'],
       passLabel: 'Password', passAuto: 'current-password',
       submit: 'Sign In',
-      links: [['create', 'Create Account'], ['forgot', 'Forgot password?']]
+      // No "Forgot password?": a forgotten password is now handled by
+      // Create Account, which replaces the account's details. The
+      // emailed-link states below stay in place as the fallback for a
+      // database without claim_account().
+      links: [['create', 'Create Account']]
     },
     create: {
       heading: 'Create your account',
@@ -250,7 +254,7 @@
       fields: ['name', 'email', 'pass'],
       passLabel: 'Choose a password', passAuto: 'new-password',
       submit: 'Create Account',
-      links: [['signin', 'Sign In'], ['forgot', 'Forgot password?']]
+      links: [['signin', 'Sign In']]
     },
     forgot: {
       heading: 'Reset your password',

@@ -79,7 +79,8 @@ http://localhost:8734
 
 Password-reset and confirmation emails send devotees back to that address. If it
 is not listed, Supabase drops them at the project's Site URL instead and the
-reset cannot finish. **Forgot password does not work until this is done.**
+reset cannot finish. This matters only for the emailed-link fallback described
+under [Accounts](#accounts) — the sign-in card no longer offers it.
 
 **6. Bump the cache version.** After changing `config.js`, edit `index.html` and
 raise the `?v=` number by one on the script and stylesheet tags, so phones pick up the
@@ -100,7 +101,7 @@ a screen with no way forward:
 |---|---|
 | is new | **Create Account** — name, email, password. Straight into the app. |
 | knows their password | **Sign In** — email and password. |
-| has forgotten it | **Forgot password?** — Supabase emails a link; opening it asks for a new password and takes them in. |
+| has forgotten it | **Create Account** with the same address and a new password. Same as the row below. |
 | types an address that already exists into Create Account | No second account is made. That account's password and name are replaced with what was just typed and the devotee goes straight in, keeping their devotee ID, rounds and history. |
 | comes back later | The session was kept in this browser. The app opens straight onto today's data. |
 
@@ -117,10 +118,11 @@ in `admin_email()`, which is published in this repository — so it also hands
 over the devotee directory, the phone numbers, the CSV export and control of
 every challenge.
 
-It was chosen knowingly, to spare devotees the emailed link. The safe path is
-still there and still works — **Forgot password?** on the sign-in card uses
-Supabase's own reset flow, which proves the devotee reads that inbox. To make
-that the only way back in, drop the function:
+It was chosen knowingly, to spare devotees the emailed link, and the sign-in
+card no longer offers a **Forgot password?** at all — Create Account is the way
+back in. The emailed path is still built and still works; it is simply the
+fallback now, reached only when `claim_account()` is absent. To make it the only
+way back in, drop the function:
 
 ```sql
 drop function if exists public.claim_account(text, text, text);
