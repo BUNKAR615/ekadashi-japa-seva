@@ -50,7 +50,8 @@ create table if not exists public.submissions (
 );
 
 create index if not exists submissions_event_idx on public.submissions (event_id);
-create index if not exists events_status_idx     on public.events (status);
+create index if not exists submissions_user_idx  on public.submissions (user_id);
+create index if not exists events_status_idx    on public.events (status);
 create index if not exists events_window_idx     on public.events (start_at, end_at);
 
 -- A revision always stamps the moment it happened, even if a client
@@ -228,6 +229,8 @@ returns text
 language sql
 immutable
 as $$ select 'dineshbunkar533@gmail.com'::text $$;
+-- (fix-005's claim_account(), if installed, refuses this address, so
+--  the admin's password can only change through the emailed link.)
 
 create or replace function public.enforce_admin_email()
 returns trigger

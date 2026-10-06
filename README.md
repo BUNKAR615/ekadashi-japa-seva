@@ -48,6 +48,14 @@ which makes Create Account replace an existing account rather than refuse. **Rea
 its header first** — it deliberately drops the check that the person typing an
 address owns it. See [Accounts](#accounts) below.
 
+Then run [`supabase/fix-006-admin-roster-history.sql`](supabase/fix-006-admin-roster-history.sql).
+It carries everything fix-004 does (so it is enough on its own if fix-004 was
+skipped), makes `claim_account()` refuse the admin address, and indexes
+submissions by devotee for the admin's history view. It ends with a PASS/FAIL
+report. Nothing is deleted. If the admin cannot sign in, run
+[`supabase/diagnose-admin-login.sql`](supabase/diagnose-admin-login.sql)
+first — it is read-only and says exactly what is wrong with that account.
+
 **3. Paste your keys** into [`config.js`](config.js):
 
 ```js
@@ -113,10 +121,14 @@ history and the devotee ID are all still there when they arrive.
 
 **What that costs, stated plainly.** This removes the check that the person
 typing an address owns it. Anyone who knows a devotee's address can set a new
-password on their account and sign in as them. That includes the admin address
-in `admin_email()`, which is published in this repository — so it also hands
-over the devotee directory, the phone numbers, the CSV export and control of
-every challenge.
+password on their account and sign in as them, and doing so signs that account
+out on every device.
+
+**The admin address is excluded** (fix-006). It is published in this
+repository, so without the exclusion anyone could take the Admin tab — and
+every such reset logged the admin out everywhere. For that one address
+`claim_account()` changes nothing: if the typed password is the real one the
+admin is simply signed in, otherwise the app offers the emailed reset link.
 
 It was chosen knowingly, to spare devotees the emailed link, and the sign-in
 card no longer offers a **Forgot password?** at all — Create Account is the way
@@ -176,8 +188,8 @@ so they hold even if someone edits the page in their browser:
   itself — `auth.users` has a unique index on the address — so a second signup
   for a registered address is refused before it reaches this schema. The app
   recovers the existing account instead of trying to create another.
-- **Knowing an address IS enough to take the account**, by deliberate choice —
-  see [Accounts](#accounts). Passwords are still hashed (bcrypt, never stored in
+- **Knowing an address IS enough to take an ordinary account**, by deliberate
+  choice — see [Accounts](#accounts). Not the admin account. Passwords are still hashed (bcrypt, never stored in
   readable form) and nothing password-shaped is written to the browser, only
   Supabase's own session token. But `claim_account()` is callable before
   sign-in, so the address alone is what guards an account. Dropping that one
@@ -199,6 +211,8 @@ so they hold even if someone edits the page in their browser:
 | `supabase/fix-003-persistence.sql` | **Run this on an existing project.** One idempotent migration to the current schema; supersedes fix-001 and fix-002 |
 | `supabase/fix-004-accounts.sql` | **Run this too.** One profile per account, `ensure_profile()`, and the address in the admin directory |
 | `supabase/fix-005-claim-account.sql` | **Read its header before running.** Makes Create Account replace an existing account instead of refusing |
+| `supabase/fix-006-admin-roster-history.sql` | **Run this too.** Includes fix-004; protects the admin account from `claim_account()`; history index |
+| `supabase/diagnose-admin-login.sql` | Read-only: why the admin account cannot sign in |
 | `supabase/verify-accounts.sql` | Read-only health report on the accounts; run it any time to check the above landed |
 | `supabase/fix-002-challenges.sql` | Superseded by fix-003; kept for reference |
 | `manifest.webmanifest` | Installable-app metadata — devotees can add it to their home screen |
@@ -211,9 +225,18 @@ and closes at a chosen date and time. It does not repeat daily. Each devotee
 keeps a single running total for that window, editable until it closes.
 
 **Devotee** — three tabs: Japa (your rounds for the challenge, numeric keypad
-capped at 216, lotus toast on save), Leaderboard (percentage of the goal
-completed, group stats, and the leaders ranked by total rounds), and Me
-(profile, challenge history, sign out).
+capped at 216, lotus toast on save, and your place on the leaderboard),
+Leaderboard (percentage of the goal completed, group stats, and **every
+registered devotee** ranked by total rounds), and Me (profile, challenge
+history, sign out). Who is signed in is always shown in the top bar.
+
+**Everyone is on every challenge.** The leaderboard lists every registered
+account, not only those who have submitted: a devotee who has not offered yet
+shows **0**, with no rank. A challenge has no participant rows of its own —
+the roster is every profile, joined on the account id to that challenge's
+submissions — so a new challenge starts everyone at 0 and every earlier
+challenge keeps its own rows exactly as they were. Rounds are per challenge,
+never lifetime totals.
 
 **Revising your count.** Chanting more rounds later is the normal case, not an
 exception. An **Edit** control sits on the Japa card, on your own leaderboard
@@ -248,8 +271,12 @@ anyone else, and the Admin tab adds Overview / Challenges / Devotees.
   admin_email() in the schema.
 - **Overview** — participation, top offerings, CSV export (with the address,
   so two devotees of the same name can be told apart).
-- **Devotees** — directory with email addresses, phone numbers and status,
-  searchable by name, address or devotee ID.
+- **Users** — every registered account with its email address, role, devotee
+  ID and rounds for the current challenge (0 = not yet), filterable by
+  All / Submitted / Not yet and searchable by name, address or devotee ID.
+  Tap a user for their page: profile details, totals across all challenges,
+  and a **History** table — occasion, date and rounds for every challenge
+  since they registered, including the ones they did not submit to.
 
 **Staying signed in.** Once a devotee has signed in, the session is kept in
 their browser and renewed in the background: closing the app and opening it

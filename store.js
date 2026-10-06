@@ -26,10 +26,14 @@
    not identifying: three devotees called Dinesh are three accounts.
 
    Passwords are handled entirely by Supabase Auth — hashed there,
-   never read back, never written to this browser. Recovering a
-   forgotten password goes through Supabase's own emailed reset link,
-   because an address alone must never be enough to take over an
-   account that belongs to somebody else.
+   never read back, never written to this browser. What the browser
+   keeps is Supabase's own session token, renewed in the background,
+   which is how a devotee stays signed in between visits.
+
+   A forgotten password is replaced through Create Account when the
+   database has claim_account() (fix-005) — except for the admin
+   address, which claim_account() refuses (fix-006) and which only
+   ever recovers through Supabase's emailed reset link.
    ============================================================ */
 (function () {
   'use strict';
@@ -58,6 +62,35 @@
     if (!Number.isInteger(n)) throw new Error('Please enter a whole number of rounds.');
     if (n > MAX_ROUNDS)      throw new Error(`The most that can be recorded is ${MAX_ROUNDS} rounds.`);
     return n;
+  }
+
+  // Most rounds first; equal counts (every 0 included) by name, so the
+  // order is stable from one refresh to the next.
+  const byRounds = (a, b) => (b.rounds - a.rounds)
+    || String(a.name || '').localeCompare(String(b.name || ''), 'en', { sensitivity: 'base' });
+
+  // The leaderboard for one challenge: every registered devotee, joined
+  // to their entry for that challenge if they have one. Joined on the
+  // account id — never on the name — so two devotees called Dinesh are
+  // two rows.
+  function roster(people, subs, me) {
+    const byUser = {};
+    (subs || []).forEach(s => { byUser[s.user_id] = s; });
+    return (people || []).map(p => {
+      const sub = byUser[p.id];
+      const r = sub ? sub.rounds : 0;
+      return {
+        userId: p.id,
+        name: p.name || 'Devotee',
+        devoteeId: p.devotee_id || '-',
+        rounds: r, total: r,
+        submitted: r > 0,
+        time: sub ? localTime(sub.updated_at) : '',
+        me: !!me && p.id === me.id,
+        isAdmin: !!p.is_admin,
+        phone: ''
+      };
+    }).sort(byRounds);
   }
 
   /* ================= Demo (localStorage) ================= */
@@ -170,16 +203,21 @@
     // devotees who share a name stay separate here as well.
     function people(eventId) {
       return Object.keys(s.accounts).map(addr => {
-        const sub = (s.subs[addr] || {})[eventId];
+        const all = s.subs[addr] || {};
+        const sub = all[eventId];
         const r = sub ? sub.rounds : 0;
+        const ids = Object.keys(all);
         return {
           userId: addr, name: s.accounts[addr].name,
           devoteeId: s.accounts[addr].devoteeId,
           email: addr, phone: s.accounts[addr].phone || '',
-          rounds: r, total: r, time: sub ? sub.time : '-',
+          createdAt: s.accounts[addr].createdAt || null,
+          rounds: r, total: r, submitted: r > 0, time: sub ? sub.time : '-',
+          lifetime: ids.reduce((n, k) => n + all[k].rounds, 0),
+          joined: ids.filter(k => all[k].rounds > 0).length,
           me: addr === s.email, isAdmin: isAdminEmail(addr)
         };
-      }).sort((a, b) => b.total - a.total);
+      }).sort(byRounds);
     }
 
     return {
@@ -212,7 +250,8 @@
           s.accounts[addr] = {
             name: cleanName(name) || addr.split('@')[0],
             devoteeId: nextDevoteeId(),
-            group: 'Jodhpur Folk'
+            group: 'Jodhpur Folk',
+            createdAt: new Date().toISOString()
           };
         }
         s.email = addr; save();
@@ -282,9 +321,18 @@
         };
       },
 
-      async leaderboard(eventId) { sync(); return people(eventId).filter(p => p.total > 0); },
+      // Everyone registered, 0 for those who have not offered yet.
+      async leaderboard(eventId) { sync(); return people(eventId); },
 
       async devotees(eventId) { sync(); return people(eventId); },
+
+      async userHistory(userId) {
+        sync();
+        const all = s.subs[userId] || {};
+        return Object.keys(all).map(id => ({
+          eventId: id, rounds: all[id].rounds, updatedAt: all[id].updatedAt || null
+        }));
+      },
 
       async myHistory() {
         sync();
@@ -511,11 +559,13 @@
     // challenge history and devotee ID stay attached to it.
     //
     // Returns:
-    //   'replaced' — the address had an account; it is now theirs to
-    //                sign into with the password they just chose
-    //   'new'      — nothing is registered under that address
-    //   null       — this database has no claim_account(), so the app
-    //                falls back to recovering by emailed link
+    //   'replaced'  — the address had an account; it is now theirs to
+    //                 sign into with the password they just chose
+    //   'protected' — the admin address, which is never replaced this
+    //                 way; nothing was changed (supabase/fix-006)
+    //   'new'       — nothing is registered under that address
+    //   null        — this database has no claim_account(), so the app
+    //                 falls back to recovering by emailed link
     async function claimAccount(addr, password, name) {
       const { data, error } = await sb.rpc('claim_account', {
         p_email: addr,
@@ -528,6 +578,7 @@
         throw new Error(friendly(m));
       }
       const row = Array.isArray(data) ? data[0] : data;
+      if (row && row.found && row.protected) return 'protected';
       return (row && row.found) ? 'replaced' : 'new';
     }
 
@@ -599,12 +650,16 @@
         // The address decides everything. An address that already has an
         // account has its password and name replaced here, keeping its
         // id — and with it every round already offered.
-        if (await claimAccount(addr, password, name) === 'replaced') {
+        const claim = await claimAccount(addr, password, name);
+        if (claim === 'replaced') {
           const { data, error } = await sb.auth.signInWithPassword({ email: addr, password });
           if (error) throw new Error(friendly(error.message));
           const user = await adopt(data.user, name);
           return { status: 'signed-in', user, replaced: true };
         }
+        // The admin account: signed in if that was its password,
+        // otherwise recovered by emailed link — never replaced.
+        if (claim === 'protected') return existingAccount(addr, password, name);
 
         const { data, error } = await sb.auth.signUp({
           email: addr,
@@ -751,53 +806,75 @@
         };
       },
 
-      // One row per devotee. Visibility is enforced by RLS — for
-      // admin-only or disabled leaderboards non-admins get no rows back.
+      // Every registered devotee, with their rounds for THIS challenge —
+      // 0 for anyone who has not offered yet. A challenge has no
+      // participant rows of its own: the roster is every profile, and a
+      // submissions row (unique on event_id + user_id) exists only once
+      // a devotee records something. So a new challenge starts everyone
+      // at 0 while every earlier challenge keeps its own rows untouched.
+      //
+      // Visibility is enforced by RLS — for admin-only or disabled
+      // leaderboards a non-admin gets back their own row only, and the
+      // app shows the group totals instead of the list.
       async leaderboard(eventId) {
         const me = await this.currentUser();
-        const { data, error } = await sb
-          .from('submissions')
-          .select('rounds,updated_at,user_id,profiles(name,devotee_id)')
-          .eq('event_id', eventId)
-          .gt('rounds', 0)
-          .order('rounds', { ascending: false });
-        if (error) throw error;
-        return data.map(r => ({
-          userId: r.user_id,
-          name: r.profiles ? r.profiles.name : 'Devotee',
-          devoteeId: r.profiles ? r.profiles.devotee_id : '-',
-          total: r.rounds, rounds: r.rounds,
-          time: localTime(r.updated_at),
-          me: !!me && r.user_id === me.id,
-          phone: ''
-        }));
+        const [people, subs] = await Promise.all([
+          sb.from('profiles').select('id,name,devotee_id,is_admin'),
+          sb.from('submissions').select('user_id,rounds,updated_at').eq('event_id', eventId)
+        ]);
+        if (people.error) throw new Error(readMsg(people.error));
+        if (subs.error) throw new Error(readMsg(subs.error));
+        return roster(people.data, subs.data, me);
       },
 
+      // The admin directory: every account with its address, its rounds
+      // for the current challenge, and its totals across all challenges.
       async devotees(eventId) {
         const me = await this.currentUser();
         const { data: dir, error: dirErr } = await sb.rpc('admin_devotees');
-        if (dirErr) throw dirErr;
-        const byUser = {};
-        if (eventId) {
-          const { data: subs } = await sb.from('submissions')
-            .select('user_id,rounds,updated_at').eq('event_id', eventId);
-          (subs || []).forEach(x => { byUser[x.user_id] = x; });
-        }
-        return dir.map(p => {
-          const sub = byUser[p.id];
+        if (dirErr) throw new Error(readMsg(dirErr));
+        // The admin reads every submission (submissions_admin_all).
+        const { data: subs, error: subErr } = await sb.from('submissions')
+          .select('user_id,event_id,rounds,updated_at');
+        if (subErr) throw new Error(readMsg(subErr));
+        const current = {}, life = {};
+        (subs || []).forEach(x => {
+          if (x.event_id === eventId) current[x.user_id] = x;
+          const l = life[x.user_id] || (life[x.user_id] = { rounds: 0, joined: 0 });
+          l.rounds += x.rounds;
+          if (x.rounds > 0) l.joined += 1;
+        });
+        return (dir || []).map(p => {
+          const sub = current[p.id];
+          const l = life[p.id] || { rounds: 0, joined: 0 };
           return {
             userId: p.id,
             name: p.name, devoteeId: p.devotee_id,
             // The address is the account, so the directory shows it.
-            // Present only once supabase/fix-004-accounts.sql has run.
+            // Present once supabase/fix-006 (or fix-004) has run.
             email: p.email || '',
-            phone: p.phone || '-',
+            phone: p.phone || '',
+            createdAt: p.created_at || null,
             rounds: sub ? sub.rounds : 0,
+            submitted: !!sub && sub.rounds > 0,
             time: sub ? localTime(sub.updated_at) : '-',
+            lifetime: l.rounds, joined: l.joined,
             me: !!me && p.id === me.id,
             isAdmin: p.is_admin
           };
-        }).sort((a, b) => b.rounds - a.rounds);
+        }).sort(byRounds);
+      },
+
+      // One devotee's entry in every challenge they have offered to.
+      // Admin-only in practice: RLS returns another devotee's rows only
+      // to the admin. Challenges with no entry are filled in as 0 by
+      // the app, which already holds the full list of challenges.
+      async userHistory(userId) {
+        const { data, error } = await sb.from('submissions')
+          .select('event_id,rounds,updated_at')
+          .eq('user_id', userId);
+        if (error) throw new Error(readMsg(error));
+        return (data || []).map(r => ({ eventId: r.event_id, rounds: r.rounds, updatedAt: r.updated_at }));
       },
 
       async myHistory() {

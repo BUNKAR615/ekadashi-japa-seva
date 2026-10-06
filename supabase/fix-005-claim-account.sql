@@ -20,10 +20,11 @@
 --  new password on their account and sign in as them — their rounds,
 --  their history, their name.
 --
---  That includes the temple admin address in admin_email(), which is
---  published in this repository. Anyone who reads it can take the
---  Admin tab: the devotee directory with phone numbers, the CSV
---  export, and control of every challenge.
+--  The temple admin address in admin_email() is EXCLUDED: for that
+--  address the function changes nothing and the app sends the admin
+--  to the emailed reset link instead. Without that exclusion, anyone
+--  who read the published address could take the Admin tab — and
+--  every reset signed the admin out on every device.
 --
 --  This was asked for knowingly, to spare devotees who have
 --  forgotten their password the emailed reset link. The safe way to
@@ -95,6 +96,12 @@ begin
     return json_build_object('found', false);
   end if;
 
+  -- The admin account is never taken over this way (fix-006). Its
+  -- password changes only through the emailed reset link.
+  if v_email = lower(public.admin_email()) then
+    return json_build_object('found', true, 'protected', true);
+  end if;
+
   update auth.users
      set encrypted_password = crypt(p_password, gen_salt('bf', 10)),
          -- An account that never confirmed its address would otherwise
@@ -152,5 +159,5 @@ do $$
 begin
   raise notice 'claim_account() installed.';
   raise notice 'Create Account with a registered address now replaces that account''s password and name.';
-  raise notice 'The address is no longer proof of ownership — including %.', public.admin_email();
+  raise notice 'The address is no longer proof of ownership — except for the admin, %.', public.admin_email();
 end $$;

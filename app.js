@@ -19,7 +19,11 @@
     mine: 0,
     myUpdatedAt: null,           // when this devotee last revised their count
     totals: { total: 0, participants: 0, average: 0, highest: 0, capacity: 0 },
+    // leaders: every registered devotee with their rounds for the
+    // current challenge (0 if they have not offered yet)
     leaders: [], activeLeaders: [], devotees: [], history: [],
+    devoteesError: null,
+    userHistory: null,           // admin: { userId, rows, error } for the open devotee
     loadError: null              // set when the database could not be read
   };
 
@@ -27,6 +31,8 @@
     tab: 'japa', adminSection: 'overview',
     sheet: null, draft: '', capped: false,
     query: '', editEventId: null,
+    userId: null,                // admin: the devotee whose history is open
+    userFilter: 'all',           // admin users list: all | submitted | pending
     toastTimer: null, busy: false,
     signingOut: false            // a sign-out this app asked for, not an expiry
   };
@@ -93,6 +99,17 @@
     return rows.slice().sort((a, b) => b.total - a.total);
   }
 
+  // Rank numbers for a list already in rank order: equal counts share a
+  // rank (1, 2, 2, 4), and a devotee who has not offered yet has none.
+  function rankNumbers(rows) {
+    let rank = 0, prev = null;
+    return rows.map((p, i) => {
+      if (!p.submitted) return null;
+      if (p.total !== prev) { rank = i + 1; prev = p.total; }
+      return rank;
+    });
+  }
+
   /* ---------- Loading ---------- */
 
   // How long what is on screen may be trusted before it is re-read from
@@ -152,8 +169,17 @@
     data.history = await store.myHistory();
 
     if (isAdmin() && ui.tab === 'admin' && ui.adminSection === 'devotees') {
-      try { data.devotees = await store.devotees(ev ? ev.id : null); }
-      catch (e) { data.devotees = []; }
+      try {
+        data.devotees = await store.devotees(ev ? ev.id : null);
+        data.devoteesError = null;
+      } catch (e) {
+        data.devoteesError = e.message || 'Could not load the registered users.';
+      }
+      if (ui.userId) {
+        const id = ui.userId;
+        try { data.userHistory = { userId: id, rows: await store.userHistory(id) }; }
+        catch (e) { data.userHistory = { userId: id, rows: null, error: e.message }; }
+      }
     }
   }
 
@@ -453,6 +479,13 @@
         } else if (res.status === 'confirm') {
           authSentKind = 'confirm';
           setAuthMode('sent');
+        } else if (res.protected) {
+          // The admin account is never replaced from this screen.
+          setAuthMode('recover', {
+            note: `<b>${esc(v.email)}</b> is the temple admin account, so its password is never replaced from `
+              + `Create Account. If you have forgotten it, we will email a link to that address — opening it lets `
+              + `you choose a new password and takes you straight in, with your rounds and history as they were.`
+          });
         } else {
           setAuthMode('recover');
         }
@@ -585,10 +618,15 @@
   }
 
   function renderHeader() {
-    // Admins keep every devotee ability and gain the Admin tab; the badge
-    // is informational, not a mode switch.
-    const badge = $('#role-badge');
-    badge.classList.toggle('hidden', !isAdmin());
+    // Who is signed in stays on screen. Admins keep every devotee
+    // ability and gain the Admin tab; the badge is informational, not a
+    // mode switch.
+    const u = data.user;
+    $('#user-chip').classList.toggle('hidden', !u);
+    $('#user-chip-av').textContent = u ? (u.name || 'D').charAt(0).toUpperCase() : '';
+    $('#user-chip-name').textContent = u ? String(u.name || '').split(' ')[0] : '';
+    $('#user-chip').setAttribute('aria-label', u ? `Signed in as ${u.name} (${u.email || ''})` : '');
+    $('#role-badge').classList.toggle('hidden', !isAdmin());
   }
 
   const DEV_TABS = [
@@ -719,10 +757,23 @@
           : `${fmt(t.participants)} devotee${t.participants === 1 ? '' : 's'} submitted`}</div>
         <div class="progress-track"><div class="progress-fill${pct >= 100 ? ' done' : ''}" style="width:${barPct}%"></div></div>
         <div class="progress-meta"><span>${pct}% of the goal completed</span><span>${fmt(ev.goal_rounds)} goal</span></div>
+        ${myStanding()}
       </div>
 
       ${quoteCard()}${mantraBlock()}
     </div>`;
+  }
+
+  // "You are #2 of 10 on the leaderboard" — only when the leaderboard is
+  // visible to this devotee.
+  function myStanding() {
+    const people = rankSorted(data.leaders);
+    const i = people.findIndex(p => p.me);
+    if (i < 0) return '';
+    const rank = rankNumbers(people)[i];
+    return `<a href="#" class="standing" data-action="goto-together">${rank
+      ? `You are <b>#${rank}</b> of ${fmt(people.length)} on the leaderboard`
+      : `You have not submitted yet · ${fmt(people.length)} on the leaderboard`}<span>›</span></a>`;
   }
 
   function quoteCard() {
@@ -793,25 +844,30 @@
       </div>`;
     } else if (people.length === 0) {
       board = `<div class="private-card">
-        <p class="big">No rounds recorded yet</p>
-        <p class="small">Be the first to offer your chanting.</p></div>`;
+        <p class="big">No devotees registered yet</p>
+        <p class="small">Everyone who creates an account appears here.</p></div>`;
     } else {
+      // Every registered devotee is listed, at 0 until they offer.
       // Only the devotee's own row offers Edit, and only while the
       // window is open. The database enforces the same rule.
       const canEdit = isOpen(ev);
-      board = `<div class="list-card">
+      const ranks = rankNumbers(people);
+      const offered = people.filter(p => p.submitted).length;
+      board = `<div class="list-meta"><span>${fmt(offered)} of ${fmt(people.length)} offered</span><span>Rounds</span></div>
+      <div class="list-card">
         ${people.map((p, i) => `
-          <div class="board-row${p.me ? ' me' : ''}">
-            <div class="rank">${i + 1}</div>
+          <div class="board-row${p.me ? ' me' : ''}${p.submitted ? '' : ' zero'}">
+            <div class="rank">${ranks[i] || '—'}</div>
             <div class="who">
               <div class="nm">${esc(ev.visibility === 'ids' ? p.devoteeId : p.name)}</div>
-              <div class="sb">${ev.visibility === 'ids'
-                ? (p.me ? 'You' : 'Devotee')
-                : (p.me ? 'You · ' + esc(p.devoteeId) : esc(p.devoteeId))}</div>
+              <div class="sb">${[
+                p.me ? 'You' : (ev.visibility === 'ids' ? 'Devotee' : esc(p.devoteeId)),
+                p.submitted ? '' : 'Not submitted yet'
+              ].filter(Boolean).join(' · ')}</div>
             </div>
             <div class="cnt">${p.total}</div>
             ${p.me && canEdit
-              ? '<button type="button" class="edit-link row" data-action="edit-rounds">Edit</button>'
+              ? `<button type="button" class="edit-link row" data-action="edit-rounds">${p.submitted ? 'Edit' : 'Add'}</button>`
               : ''}
           </div>`).join('')}
       </div>
@@ -860,10 +916,12 @@
         </div>
       </div>`;
     const rows = [
-      { label: 'Devotee ID', value: u.devoteeId || '—' },
       { label: 'Email', value: u.email || '—' },
+      { label: 'Devotee ID', value: u.devoteeId || '—' },
       { label: 'Group', value: u.group || '—' },
-      { label: 'Role', value: u.isAdmin ? 'Admin' : 'User' }
+      { label: 'Role', value: u.isAdmin ? 'Admin' : 'User' },
+      // The session is kept in this browser until they sign out.
+      { label: 'Signed in', value: 'On this device, until you sign out' }
     ];
     return `<div class="pad">
       <div class="card profile-card">
@@ -892,7 +950,7 @@
   const ADMIN_SECTIONS = [
     { key: 'overview',  label: 'Overview' },
     { key: 'events',    label: 'Challenges' },
-    { key: 'devotees',  label: 'Devotees' }
+    { key: 'devotees',  label: 'Users' }
   ];
 
   function viewAdmin() {
@@ -912,7 +970,8 @@
     const ev = activeEvent();
     const t = data.totals;
     const pct = ev && t.capacity ? Math.round((t.participants / t.capacity) * 100) : 0;
-    const top = ev ? rankSorted(data.activeLeaders).slice(0, 4) : [];
+    const top = ev ? rankSorted(data.activeLeaders).filter(p => p.submitted).slice(0, 4) : [];
+    const pending = ev ? data.activeLeaders.filter(p => !p.submitted) : [];
 
     const stats = ev ? [
       { label: 'Live challenge', value: ev.name.split(' ')[0], sub: dateRange(ev) },
@@ -946,6 +1005,10 @@
           <span>${ev ? `${fmt(t.participants)} of ${fmt(t.capacity)} devotee${t.capacity === 1 ? '' : 's'} have submitted` : 'Waiting for the next challenge'}</span>
           <span>${ev ? pct + '%' : ''}</span>
         </div>
+        ${ev ? `<div class="pending-line">
+          <span><b>${fmt(pending.length)}</b> registered user${pending.length === 1 ? ' has' : 's have'} not submitted yet</span>
+          <a href="#" data-action="goto-users" data-filter="pending">View</a>
+        </div>` : ''}
         <div class="btn-row">
           <button type="button" class="btn-fill" data-action="new-event">New Challenge</button>
           <button type="button" class="btn-line" data-action="export-csv">Export CSV</button>
@@ -1017,9 +1080,38 @@
 
   /* ----- Admin: Devotees ----- */
 
+  /* Every registered account, identified by its email address — two
+     devotees called Dinesh are two rows with two addresses. Each row
+     shows the rounds for the current challenge (0 until they offer) and
+     opens that devotee's history across every challenge. */
+
+  const USER_FILTERS = [
+    { key: 'all',       label: 'All' },
+    { key: 'submitted', label: 'Submitted' },
+    { key: 'pending',   label: 'Not yet' }
+  ];
+
   function viewAdminDevotees() {
+    if (ui.userId) return viewAdminUser();
+    const ev = data.event;
+    const all = data.devotees;
+    const counts = {
+      all: all.length,
+      submitted: all.filter(p => p.submitted).length,
+      pending: all.filter(p => !p.submitted).length
+    };
     return `<div class="pad-lg">
-      <h2 class="h2" style="margin-bottom:12px">Devotees</h2>
+      <h2 class="h2">Users</h2>
+      <p class="sub">${fmt(all.length)} registered${ev
+        ? ` · rounds shown for <b>${esc(ev.name)}</b>${windowState(ev) === 'ended' ? ' (ended)' : ''}`
+        : ' · no challenge yet'}</p>
+      ${data.devoteesError ? `<div class="private-card" style="margin-bottom:12px">
+        <p class="big">Could not load the users</p><p class="small">${esc(data.devoteesError)}</p>
+        <button type="button" class="btn-line" style="margin-top:12px;width:100%" data-action="retry-load">Try again</button>
+      </div>` : ''}
+      <div class="filter-row">
+        ${USER_FILTERS.map(f => `<button type="button" class="filter-chip${ui.userFilter === f.key ? ' on' : ''}" data-userfilter="${f.key}">${f.label} <span>${counts[f.key]}</span></button>`).join('')}
+      </div>
       <input type="text" id="devotee-search" class="search-field" placeholder="Search name, email or devotee ID">
       <div id="devotee-list-wrap">${devoteeListHtml()}</div>
     </div>`;
@@ -1030,30 +1122,148 @@
     // Two devotees may share a name, so the address is searchable too —
     // it is the one thing that tells the accounts apart.
     const people = data.devotees.filter(p =>
-      !q || p.name.toLowerCase().includes(q)
+      (ui.userFilter === 'all' || (ui.userFilter === 'submitted') === !!p.submitted)
+      && (!q || p.name.toLowerCase().includes(q)
          || (p.email || '').toLowerCase().includes(q)
-         || (p.devoteeId || '').toLowerCase().includes(q));
+         || (p.devoteeId || '').toLowerCase().includes(q)));
     const rows = people.map(p => `
-      <div class="devotee-row">
+      <button type="button" class="devotee-row tappable" data-action="open-user" data-id="${esc(p.userId)}">
         <div class="av">${esc((p.name || '?')[0])}</div>
         <div class="who">
-          <div class="nm">${esc(p.name)}${p.isAdmin ? ' <span class="admin-tag">admin</span>' : ''}</div>
-          <div class="sb">${esc(p.devoteeId)} · ${esc(p.email || p.phone || '—')}</div>
+          <div class="nm">${esc(p.name)}${p.isAdmin ? ' <span class="admin-tag">admin</span>' : ''}${p.me ? ' <span class="you-tag">you</span>' : ''}</div>
+          <div class="sb em">${esc(p.email || 'address not loaded — run fix-006')}</div>
+          <div class="sb">${esc(p.devoteeId)} · ${p.isAdmin ? 'Admin' : 'User'} · ${fmt(p.lifetime || 0)} rounds all-time</div>
         </div>
         <div class="cnt">
           <div class="n">${p.rounds}</div>
-          <div class="st" style="color:${p.rounds > 0 ? '#2F7D45' : '#B3ACA1'}">${p.rounds > 0 ? 'Submitted' : 'Pending'}</div>
+          <div class="st" style="color:${p.submitted ? '#2F7D45' : '#B3ACA1'}">${p.submitted ? 'Submitted' : 'Not yet'}</div>
         </div>
-      </div>`).join('');
-    return `<div class="list-meta"><span>${people.length} devotee${people.length === 1 ? '' : 's'}</span><span>Sorted by rounds</span></div>
-      <div class="list-card">${rows}</div>
-      <p class="board-note" style="text-align:left;padding:0 4px">Admin access is fixed to one temple account and cannot be granted from here.</p>
-      ${people.length === 0 ? `<p class="empty-note">${ui.query ? `No devotee matches “${esc(ui.query)}”.` : 'No devotees yet.'}</p>` : ''}`;
+        <span class="chev">›</span>
+      </button>`).join('');
+    const empty = people.length === 0
+      ? `<p class="empty-note">${ui.query ? `No user matches “${esc(ui.query)}”.`
+          : ui.userFilter === 'pending' ? 'Everyone registered has submitted. Hare Krishna!'
+          : ui.userFilter === 'submitted' ? 'Nobody has submitted yet for this challenge.'
+          : 'No users yet.'}</p>`
+      : '';
+    return `<div class="list-meta"><span>${people.length} user${people.length === 1 ? '' : 's'}</span><span>This challenge</span></div>
+      ${people.length ? `<div class="list-card">${rows}</div>` : ''}
+      ${empty}
+      <p class="board-note" style="text-align:left;padding:0 4px">Tap a user to see every challenge they have taken part in. Admin access is fixed to one temple account and cannot be granted from here.</p>`;
   }
 
   function renderDevoteeList() {
     const wrap = $('#devotee-list-wrap');
     if (wrap) wrap.innerHTML = devoteeListHtml();
+  }
+
+  // Opens one devotee's page at once and fills the history in as soon
+  // as it arrives; the background refresh keeps it current after that.
+  async function openUser(id) {
+    if (!id) return;
+    ui.userId = id;
+    data.userHistory = null;
+    render();
+    try { data.userHistory = { userId: id, rows: await store.userHistory(id) }; }
+    catch (e) { data.userHistory = { userId: id, rows: null, error: e.message }; }
+    if (ui.userId === id && ui.tab === 'admin') render({ keepScroll: true });
+  }
+
+  // The challenges a devotee could have taken part in: every published
+  // challenge that has opened, minus those that had already ended before
+  // they registered — plus any they have an entry for, whatever its state.
+  function historyRows(person, entries) {
+    const byEvent = {};
+    (entries || []).forEach(x => { byEvent[x.eventId] = x; });
+    const joinedAt = person && person.createdAt ? new Date(person.createdAt).getTime() : 0;
+    const now = Date.now();
+    return data.events
+      .filter(e => byEvent[e.id] || (e.status !== 'draft'
+        && new Date(e.start_at).getTime() <= now
+        && new Date(e.end_at).getTime() >= joinedAt))
+      .sort((a, b) => String(b.start_at).localeCompare(String(a.start_at)))
+      .map(e => {
+        const x = byEvent[e.id];
+        return {
+          event: e,
+          rounds: x ? x.rounds : 0,
+          submitted: !!x && x.rounds > 0,
+          updatedAt: x ? x.updatedAt : null,
+          live: windowState(e) === 'open'
+        };
+      });
+  }
+
+  function viewAdminUser() {
+    const p = data.devotees.find(d => d.userId === ui.userId);
+    const back = '<button type="button" class="back-link" data-action="close-user">‹ All users</button>';
+    if (!p) {
+      return `<div class="pad-lg">${back}
+        <p class="empty-note">${data.devoteesError ? esc(data.devoteesError) : 'Loading…'}</p></div>`;
+    }
+    const h = data.userHistory && data.userHistory.userId === p.userId ? data.userHistory : null;
+    const rows = h && h.rows ? historyRows(p, h.rows) : null;
+    const joined = rows ? rows.filter(r => r.submitted) : [];
+    const total = joined.reduce((n, r) => n + r.rounds, 0);
+    const best = joined.reduce((n, r) => Math.max(n, r.rounds), 0);
+    const cur = data.event;
+    const curRow = rows && cur ? rows.find(r => r.event.id === cur.id) : null;
+
+    const details = [
+      { label: 'Email', value: p.email || '—' },
+      { label: 'Role', value: p.isAdmin ? 'Admin' : 'User' },
+      { label: 'Devotee ID', value: p.devoteeId || '—' },
+      { label: 'Registered', value: p.createdAt ? fmtDateShort(p.createdAt) : '—' },
+      { label: 'Phone', value: p.phone || '—' }
+    ];
+
+    let table;
+    if (!h) {
+      table = '<p class="empty-note">Loading history…</p>';
+    } else if (h.error) {
+      table = `<div class="private-card"><p class="big">Could not load the history</p><p class="small">${esc(h.error)}</p>
+        <button type="button" class="btn-line" style="margin-top:12px;width:100%" data-action="retry-load">Try again</button></div>`;
+    } else if (!rows.length) {
+      table = '<p class="empty-note">No challenges have run since this user registered.</p>';
+    } else {
+      table = `<div class="list-card">
+        <div class="hist-row hist-head"><span>Occasion / Challenge</span><span>Date</span><span>Rounds</span></div>
+        ${rows.map(r => `<div class="hist-row${r.submitted ? '' : ' zero'}">
+          <span class="hist-name">${esc(r.event.name)}${r.live ? ' <span class="live-tag">live</span>' : ''}
+            <small>${r.submitted
+              ? (r.updatedAt ? 'Last updated ' + esc(fmtStamp(r.updatedAt)) : 'Submitted')
+              : (r.live ? 'Not submitted yet' : 'Did not submit')}</small></span>
+          <span class="hist-date">${esc(fmtDateShort(r.event.start_at))}</span>
+          <span class="hist-n">${r.rounds}</span>
+        </div>`).join('')}
+      </div>`;
+    }
+
+    return `<div class="pad-lg">
+      ${back}
+      <div class="card profile-card" style="margin-top:8px">
+        <div class="avatar">${esc((p.name || 'D')[0])}</div>
+        <div class="profile-name">${esc(p.name)}</div>
+        <div class="profile-id email">${esc(p.email || p.devoteeId || '')}</div>
+        <div class="profile-stats">
+          <div class="profile-stat"><div class="n">${rows ? fmt(total) : '…'}</div><div class="l">Total rounds</div></div>
+          <div class="profile-stat"><div class="n">${rows ? `${joined.length}<small>/${rows.length}</small>` : '…'}</div><div class="l">Challenges joined</div></div>
+          <div class="profile-stat"><div class="n">${rows ? fmt(best) : '…'}</div><div class="l">Best</div></div>
+        </div>
+      </div>
+
+      ${cur ? `<div class="panel" style="margin-top:12px">
+        <span class="eyebrow">${windowState(cur) === 'ended' ? 'Last challenge' : 'Current challenge'}</span>
+        <div class="cur-line"><span>${esc(cur.name)}</span><b>${curRow ? curRow.rounds : p.rounds} rounds</b></div>
+      </div>` : ''}
+
+      <div class="eyebrow" style="display:block;margin:18px 0 8px 4px">History</div>
+      ${table}
+
+      <div class="list-card" style="margin-top:12px">
+        ${details.map(r => `<div class="profile-row"><span class="l">${r.label}</span><span class="v">${esc(r.value)}</span></div>`).join('')}
+      </div>
+    </div>`;
   }
 
   /* ---------- Rounds sheet ---------- */
@@ -1346,8 +1556,15 @@
   /* ---------- Events ---------- */
 
   document.addEventListener('click', async ev => {
-    const t = ev.target.closest('[data-action],[data-tab],[data-adminsec],[data-key],[data-add],[data-authmode],.vis-option');
+    const t = ev.target.closest('[data-action],[data-tab],[data-adminsec],[data-userfilter],[data-key],[data-add],[data-authmode],.vis-option');
     if (!t) return;
+
+    if (t.dataset.userfilter) {
+      ui.userFilter = t.dataset.userfilter;
+      document.querySelectorAll('.filter-chip').forEach(c => c.classList.toggle('on', c === t));
+      renderDevoteeList();
+      return;
+    }
 
     // The links under the sign-in card.
     if (t.dataset.authmode) {
@@ -1357,6 +1574,7 @@
     }
     if (t.dataset.adminsec) {
       ui.adminSection = t.dataset.adminsec;
+      ui.userId = null;
       if (ui.adminSection === 'devotees') await reload();
       else render();
       return;
@@ -1381,6 +1599,14 @@
       case 'close-overlay':     closeOverlay(); break;
       case 'save-rounds':       await saveRounds(); break;
       case 'goto-together':     ev.preventDefault(); ui.tab = 'together'; render(); break;
+      case 'goto-users':
+        ev.preventDefault();
+        ui.tab = 'admin'; ui.adminSection = 'devotees'; ui.userId = null;
+        ui.userFilter = t.dataset.filter || 'all';
+        await reload();
+        break;
+      case 'open-user':         await openUser(t.dataset.id); break;
+      case 'close-user':        ui.userId = null; data.userHistory = null; render(); break;
       case 'sign-out':          await signOut(); break;
       case 'new-event':         openEventForm(null); break;
       case 'edit-event':        openEventForm(t.dataset.id); break;
